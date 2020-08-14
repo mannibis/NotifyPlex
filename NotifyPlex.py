@@ -128,11 +128,13 @@ plex_password = os.environ['NZBPO_PLEXPASS']
 refresh_library = os.environ['NZBPO_REFRESHLIBRARY'] == 'yes'
 refresh_mode = os.environ['NZBPO_REFRESHMODE']
 silent_mode = os.environ['NZBPO_SILENTFAILURE'] == 'yes'
+script_dir = os.environ['NZBOP_SCRIPTDIR']
 
 
 def get_auth_token(plex_user, plex_pass):
-	if os.path.isfile('plex_auth.ini'):
-		with open('plex_auth.ini', 'r') as f:
+	plex_auth_path = os.path.join(script_dir, 'NotifyPlex', 'plex_auth.ini')
+	if os.path.isfile(plex_auth_path):
+		with open(plex_auth_path, 'r') as f:
 			plex_dict = pickle.load(f)
 		print('[INFO] NOTIFYPLEX: USING STORED PLEX AUTH TOKEN. BYPASSING plex.tv')
 		return plex_dict.get('auth_token')
@@ -155,7 +157,7 @@ def get_auth_token(plex_user, plex_pass):
 		try:
 			plex_auth_token = root.attrib['authToken']
 			print('[INFO] NOTIFYPLEX: plex.tv AUTHENTICATION SUCCESSFUL. STORING AUTH TOKEN TO DISK')
-			with open('plex_auth.ini', 'w') as f:
+			with open(plex_auth_path, 'w') as f:
 				pickle.dump({'auth_token': plex_auth_token}, f)
 			return plex_auth_token
 		except KeyError:
