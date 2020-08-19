@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 #
 ##############################################################################
 ### NZBGET POST-PROCESSING SCRIPT                                          ###
@@ -9,10 +9,10 @@
 # Auto-Detection of NZBGet category and Plex sections is now supported. This script also works with Plex Home enabled.
 #
 # Copyright (C) 2020 mannibis
-# Version 2.6
+# Version 3.0
 #
 #
-# NOTE: This script requires Python 2.x and the "requests" module to be installed on your system.
+# NOTE: This script requires Python 3.x and the "requests" module to be installed on your system.
 
 ##############################################################################
 ### OPTIONS                                                                ###
@@ -129,12 +129,12 @@ refresh_library = os.environ['NZBPO_REFRESHLIBRARY'] == 'yes'
 refresh_mode = os.environ['NZBPO_REFRESHMODE']
 silent_mode = os.environ['NZBPO_SILENTFAILURE'] == 'yes'
 script_dir = os.environ['NZBOP_SCRIPTDIR']
+plex_auth_path = os.path.join(script_dir, 'NotifyPlex', 'plex_auth.ini')
 
 
 def get_auth_token(plex_user, plex_pass):
-	plex_auth_path = os.path.join(script_dir, 'NotifyPlex', 'plex_auth.ini')
 	if os.path.isfile(plex_auth_path):
-		with open(plex_auth_path, 'r') as f:
+		with open(plex_auth_path, 'rb') as f:
 			plex_dict = pickle.load(f)
 		print('[INFO] NOTIFYPLEX: USING STORED PLEX AUTH TOKEN. BYPASSING plex.tv')
 		return plex_dict.get('auth_token')
@@ -146,7 +146,7 @@ def get_auth_token(plex_user, plex_pass):
 			'X-Plex-Platform-Version': '21.0',
 			'X-Plex-Provides': 'controller',
 			'X-Plex-Product': 'NotifyPlex',
-			'X-Plex-Version': "2.6",
+			'X-Plex-Version': "3.0",
 			'X-Plex-Device': 'NZBGet',
 			'X-Plex-Client-Identifier': '12286'
 	}
@@ -156,23 +156,24 @@ def get_auth_token(plex_user, plex_pass):
 		root = ET.fromstring(auth_response)
 		try:
 			plex_auth_token = root.attrib['authToken']
+			plex_dict = {'auth_token': plex_auth_token}
 			print('[INFO] NOTIFYPLEX: plex.tv AUTHENTICATION SUCCESSFUL. STORING AUTH TOKEN TO DISK')
-			with open(plex_auth_path, 'w') as f:
-				pickle.dump({'auth_token': plex_auth_token}, f)
+			with open(plex_auth_path, 'wb') as f:
+				pickle.dump(plex_dict, f)
 			return plex_auth_token
 		except KeyError:
 			if silent_mode:
-				print ('[WARNING] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv. USERNAME/PASSWORD INCORRECT. SILENT FAILURE MODE ACTIVATED')
+				print('[WARNING] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv SERVERS. SILENT FAILURE MODE ACTIVATED')
 				sys.exit(POSTPROCESS_SUCCESS)
 			else:
-				print ('[ERROR] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv. USERNAME/PASSWORD INCORRECT')
+				print('[ERROR] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv SERVERS. TRY AGAIN')
 				sys.exit(POSTPROCESS_ERROR)
 	except requests.exceptions.Timeout or requests.exceptions.HTTPError or requests.exceptions.ConnectionError:
 		if silent_mode:
-			print ('[WARNING] NOTIFYPLEX: THERE WAS AN ERROR AUTHENTICATING WITH plex.tv. SILENT FAILURE MODE ACTIVATED')
+			print('[WARNING] NOTIFYPLEX: ERROR CONNECTING WITH plex.tv SERVERS. SILENT FAILURE MODE ACTIVATED')
 			sys.exit(POSTPROCESS_SUCCESS)
 		else:
-			print ('[ERROR] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv')
+			print('[ERROR] NOTIFYPLEX: ERROR CONNECTING WITH plex.tv SERVERS. TRY AGAIN')
 			sys.exit(POSTPROCESS_ERROR)
 
 
@@ -187,16 +188,16 @@ def refresh_auto(movie_cats, tv_cats, plex_ip):
 		'X-Plex-Token': get_auth_token(plex_username, plex_password)
 	}
 
-	url = 'http://%s/library/sections' % plex_ip
+	url = 'http://{}/library/sections'.format(plex_ip)
 	try:
 		section_request = requests.get(url, params=params, timeout=10)
 		section_response = section_request.content
 	except requests.exceptions.Timeout or requests.exceptions.HTTPError or requests.exceptions.ConnectionError:
 		if silent_mode:
-			print ('[WARNING] NOTIFYPLEX: ERROR AUTO-DETECTING PLEX SECTIONS. SILENT FAILURE MODE ACTIVATED')
+			print('[WARNING] NOTIFYPLEX: ERROR AUTO-DETECTING PLEX SECTIONS. SILENT FAILURE MODE ACTIVATED')
 			sys.exit(POSTPROCESS_SUCCESS)
 		else:
-			print ('[ERROR] NOTIFYPLEX: ERROR AUTO-DETECTING PLEX SECTIONS. CHECK NETWORK CONNECTION AND PLEX SERVER IP:PORT')
+			print('[ERROR] NOTIFYPLEX: ERROR AUTO-DETECTING PLEX SECTIONS. CHECK CONNECTION DETAILS AND TRY AGAIN')
 			sys.exit(POSTPROCESS_ERROR)
 
 	root = ET.fromstring(section_response)
@@ -213,32 +214,32 @@ def refresh_auto(movie_cats, tv_cats, plex_ip):
 	for tv_cat in tv_cats_split:
 		if nzb_cat == tv_cat:
 			for tv_section in tv_sections:
-				refresh_url = 'http://%s/library/sections/%s/refresh' % (plex_ip, tv_section)
+				refresh_url = 'http://{}/library/sections/{}/refresh'.format(plex_ip, tv_section)
 				try:
 					requests.get(refresh_url, params=params, timeout=10)
 				except requests.Timeout or requests.ConnectionError or requests.HTTPError:
 					if silent_mode:
-						print ('[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION %s. SILENT FAILURE MODE ACTIVATED' % tv_section)
+						print('[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION {}. SILENT FAILURE MODE ACTIVATED'.format(tv_section))
 						sys.exit(POSTPROCESS_SUCCESS)
 					else:
-						print ('[ERROR] NOTIFYPLEX: ERROR OPENING URL. CHECK NETWORK CONNECTION, PLEX SERVER IP:PORT, AND SECTION NUMBERS')
+						print('[ERROR] NOTIFYPLEX: ERROR UPDATING SECTION {}. CHECK CONNECTION DETAILS AND TRY AGAIN'.format(tv_section))
 						sys.exit(POSTPROCESS_ERROR)
-				print ('[INFO] NOTIFYPLEX: TARGETED PLEX UPDATE FOR SECTION %s COMPLETE' % tv_section)
+				print('[INFO] NOTIFYPLEX: TARGETED PLEX UPDATE FOR SECTION {} COMPLETE'.format(tv_section))
 
 	for movie_cat in movie_cats_split:
 		if nzb_cat == movie_cat:
 			for movie_section in movie_sections:
-				section_url = 'http://%s/library/sections/%s/refresh' % (plex_ip, movie_section)
+				section_url = 'http://{}/library/sections/{}/refresh'.format(plex_ip, movie_section)
 				try:
 					requests.get(section_url, params=params, timeout=10)
 				except requests.Timeout or requests.ConnectionError or requests.HTTPError:
 					if silent_mode:
-						print ('[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION %s. SILENT FAILURE MODE ACTIVATED' % movie_section)
+						print('[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION {}. SILENT FAILURE MODE ACTIVATED'.format(movie_section))
 						sys.exit(POSTPROCESS_SUCCESS)
 					else:
-						print ('[ERROR] NOTIFYPLEX: ERROR OPENING URL. CHECK NETWORK CONNECTION, PLEX SERVER IP:PORT, AND SECTION NUMBERS')
+						print('[ERROR] NOTIFYPLEX: ERROR UPDATING SECTION {}. CHECK CONNECTION DETAILS AND TRY AGAIN'.format(movie_section))
 						sys.exit(POSTPROCESS_ERROR)
-				print ('[INFO] NOTIFYPLEX: TARGETED PLEX UPDATE FOR SECTION %s COMPLETE' % movie_section)
+				print('[INFO] NOTIFYPLEX: TARGETED PLEX UPDATE FOR SECTION {} COMPLETE'.format(movie_section))
 
 
 def refresh_custom_sections(raw_plex_sections, plex_ip):
@@ -256,12 +257,12 @@ def refresh_custom_sections(raw_plex_sections, plex_ip):
 			requests.get(section_url, params=params, timeout=10)
 		except requests.exceptions.Timeout or requests.exceptions.HTTPError or requests.exceptions.ConnectionError:
 			if silent_mode:
-				print ('[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION %s. SILENT FAILURE MODE ACTIVATED' % plex_section)
+				print('[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION %s. SILENT FAILURE MODE ACTIVATED' % plex_section)
 				sys.exit(POSTPROCESS_SUCCESS)
 			else:
-				print ('[ERROR] NOTIFYPLEX: ERROR OPENING URL. CHECK NETWORK CONNECTION, PLEX SERVER IP:PORT, AND SECTION NUMBERS')
+				print('[ERROR] NOTIFYPLEX: ERROR OPENING URL. CHECK NETWORK CONNECTION, PLEX SERVER IP:PORT, AND SECTION NUMBERS')
 				sys.exit(POSTPROCESS_ERROR)
-		print ('[INFO] NOTIFYPLEX: TARGETED PLEX UPDATE FOR SECTION %s COMPLETE' % plex_section)
+		print('[INFO] NOTIFYPLEX: TARGETED PLEX UPDATE FOR SECTION %s COMPLETE' % plex_section)
 
 
 def show_gui_notification(raw_pht_ips):
@@ -284,12 +285,12 @@ def show_gui_notification(raw_pht_ips):
 
 		pht_rpc_url = 'http://%s:3005/jsonrpc' % pht_url
 		headers = {'content-type': 'application/json'}
-		payload= {'id': 1, 'jsonrpc': '2.0', 'method': 'GUI.ShowNotification', 'params': {'title': 'Downloaded', 'message': gui_text}}
+		payload = {'id': 1, 'jsonrpc': '2.0', 'method': 'GUI.ShowNotification', 'params': {'title': 'Downloaded', 'message': gui_text}}
 		try:
 			requests.post(pht_rpc_url, data=json.dumps(payload), headers=headers, timeout=10)
-			print ('[INFO] NOTIFYPLEX: GUI NOTIFICATION TO PHT INSTANCE SUCCESSFUL')
+			print('[INFO] NOTIFYPLEX: GUI NOTIFICATION TO PHT INSTANCE SUCCESSFUL')
 		except requests.exceptions.Timeout or requests.exceptions.HTTPError or requests.exceptions.ConnectionError:
-			print ('[WARNING] NOTIFYPLEX: PHT GUI NOTIFICATION FAILED')
+			print('[WARNING] NOTIFYPLEX: PHT GUI NOTIFICATION FAILED')
 
 
 if pp_status:
@@ -315,5 +316,5 @@ if pp_status:
 	sys.exit(POSTPROCESS_SUCCESS)
 
 else:
-	print ('[ERROR] NOTIFYPLEX: SKIPPING PLEX UPDATE BECAUSE DOWNLOAD FAILED.')
+	print('[ERROR] NOTIFYPLEX: SKIPPING PLEX UPDATE BECAUSE DOWNLOAD FAILED.')
 	sys.exit(POSTPROCESS_NONE)
