@@ -31,6 +31,8 @@ This post-processing script requires python3 and the 'requests' module to be ins
 
 `chmod +x NotifyPlex.py`
 
+* Set permissions on NotifyPlex folder inside scripts directory. Script should have write privileges in order to store auth token
+
 * Configure variables within NZBGet Web UI
 
 * Enable script in Category or Extension Scripts NZBGet settings
