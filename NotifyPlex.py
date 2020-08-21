@@ -151,7 +151,7 @@ def get_auth_token(plex_user, plex_pass):
 			'X-Plex-Client-Identifier': '12286'
 	}
 	try:
-		auth_request = requests.post(auth_url, headers=headers, data=auth_params)
+		auth_request = requests.post(auth_url, headers=headers, data=auth_params, timeout=30, verify=True)
 		auth_response = auth_request.content
 		root = ET.fromstring(auth_response)
 		try:
