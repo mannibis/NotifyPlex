@@ -9,7 +9,7 @@
 # Auto-Detection of NZBGet category and Plex sections is now supported. This script also works with Plex Home enabled.
 #
 # Copyright (C) 2020 mannibis
-# Version 3.0
+# Version 3.1
 #
 #
 # NOTE: This script requires Python 3.x and the "requests" module to be installed on your system.
@@ -45,6 +45,9 @@
 #plexUser=
 # Plex.tv Password [Required]
 #plexPass=
+
+# To test Plex Media Server connection and authorization, Save IP:Port, username, and password settings and click button.
+#ConnectionTest@Test PMS Connection
 
 # Library Refresh Mode (Auto,Custom,Both).
 #
@@ -92,44 +95,11 @@ POSTPROCESS_SUCCESS = 93
 POSTPROCESS_ERROR = 94
 POSTPROCESS_NONE = 95
 
-if 'NZBPP_STATUS' not in os.environ:
-	print('*** NZBGet post-processing script ***')
-	print('This script is supposed to be called from NZBGet v13.0 or later.')
-	sys.exit(POSTPROCESS_ERROR)
-
-required_options = ('NZBPO_SILENTFAILURE', 'NZBPO_MOVIESCAT', 'NZBPO_TVCAT', 'NZBPO_REFRESHMODE', 'NZBPO_REFRESHLIBRARY', 'NZBPO_DHEADERS', 'NZBPO_GUISHOW', 'NZBPO_PLEXUSER', 'NZBPO_PLEXPASS')
-for optname in required_options:
-	if optname not in os.environ:
-		print('[ERROR] NOTIFYPLEX: OPTION %s IS MISSING IN CONFIGURATION FILE. PLEASE CHECK SCRIPT SETTINGS' % optname[6:])
-		sys.exit(POSTPROCESS_ERROR)
-
-# Check to see if download was successful
-pp_status = os.environ['NZBPP_STATUS'].startswith('SUCCESS/')
-
-dnzboptions = ('NZBPR__DNZB_PROPERNAME', 'NZBPR__DNZB_EPISODENAME', 'NZBPR__DNZB_MOVIEYEAR')
-if dnzboptions[0] in os.environ:
-	proper_name = os.environ[dnzboptions[0]]
-else:
-	proper_name = ''
-if dnzboptions[1] in os.environ:
-	proper_ep = os.environ[dnzboptions[1]]
-else:
-	proper_ep = ''
-if dnzboptions[2] in os.environ:
-	proper_year = os.environ[dnzboptions[2]]
-else:
-	proper_year = ''
-
-nzb_name = os.environ['NZBPP_NZBNAME']
-nzb_cat = os.environ['NZBPP_CATEGORY']
-gui_show = os.environ['NZBPO_GUISHOW'] == 'yes'
 plex_username = os.environ['NZBPO_PLEXUSER']
 plex_password = os.environ['NZBPO_PLEXPASS']
-refresh_library = os.environ['NZBPO_REFRESHLIBRARY'] == 'yes'
-refresh_mode = os.environ['NZBPO_REFRESHMODE']
-silent_mode = os.environ['NZBPO_SILENTFAILURE'] == 'yes'
 script_dir = os.environ['NZBOP_SCRIPTDIR']
-plex_auth_path = os.path.join(script_dir, 'NotifyPlex', 'plex_auth.ini')
+notifyplex_directory = os.path.dirname(os.path.realpath(__file__))
+plex_auth_path = os.path.join(script_dir, notifyplex_directory, 'plex_auth.ini')
 
 
 def get_auth_token(plex_user, plex_pass):
@@ -157,27 +127,89 @@ def get_auth_token(plex_user, plex_pass):
 		try:
 			plex_auth_token = root.attrib['authToken']
 			plex_dict = {'auth_token': plex_auth_token}
-			print('[INFO] NOTIFYPLEX: plex.tv AUTHENTICATION SUCCESSFUL. STORING AUTH TOKEN TO DISK')
-			try:
-				with open(plex_auth_path, 'wb') as f:
-					pickle.dump(plex_dict, f)
-			except PermissionError:
-				print('[WARNING] NOTIFYPLEX: CANNOT WRITE TO DISK. PLEASE SET PROPER PERMISSIONS ON YOUR NOTIFYPLEX FOLDER IF YOU WANT TO STORE AUTH TOKEN')
+			if not test_mode:
+				print('[INFO] NOTIFYPLEX: plex.tv AUTHENTICATION SUCCESSFUL. STORING AUTH TOKEN TO DISK')
+				try:
+					with open(plex_auth_path, 'wb') as f:
+						pickle.dump(plex_dict, f)
+				except PermissionError:
+					print('[WARNING] NOTIFYPLEX: CANNOT WRITE TO DISK. PLEASE SET PROPER PERMISSIONS ON YOUR NOTIFYPLEX FOLDER IF YOU WANT TO STORE AUTH TOKEN')
 			return plex_auth_token
 		except KeyError:
+			if test_mode:
+				print('[ERROR] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv SERVERS. CHECK USERNAME/PASSWORD AND RE-TRY TEST')
+				sys.exit(POSTPROCESS_ERROR)
 			if silent_mode:
 				print('[WARNING] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv SERVERS. SILENT FAILURE MODE ACTIVATED')
 				sys.exit(POSTPROCESS_SUCCESS)
 			else:
 				print('[ERROR] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv SERVERS. TRY AGAIN')
 				sys.exit(POSTPROCESS_ERROR)
-	except requests.exceptions.Timeout or requests.exceptions.HTTPError or requests.exceptions.ConnectionError:
+	except requests.exceptions.RequestException or OSError:
+		requests.session().close()
 		if silent_mode:
 			print('[WARNING] NOTIFYPLEX: ERROR CONNECTING WITH plex.tv SERVERS. SILENT FAILURE MODE ACTIVATED')
 			sys.exit(POSTPROCESS_SUCCESS)
 		else:
 			print('[ERROR] NOTIFYPLEX: ERROR CONNECTING WITH plex.tv SERVERS. TRY AGAIN')
 			sys.exit(POSTPROCESS_ERROR)
+
+
+command = os.environ.get('NZBCP_COMMAND')
+test_mode = command == 'ConnectionTest'
+
+if (command is not None) and (not test_mode):
+	print('[ERROR] NOTIFYPLEX: INVALID COMMAND ' + command)
+	sys.exit(POSTPROCESS_ERROR)
+if test_mode:
+	required_test_options = ('NZBPO_PLEXUSER', 'NZBPO_PLEXPASS', 'NZBPO_PLEXIP')
+	plex_test_ip = os.environ['NZBPO_PLEXIP']
+	for optname in required_test_options:
+		if optname not in os.environ:
+			print('[ERROR] NOTIFYPLEX: OPTION {} IS MISSING IN CONFIGURATION FILE. PLEASE CHECK SCRIPT SETTINGS'.format(optname[6:]))
+			sys.exit(POSTPROCESS_ERROR)
+
+	print('[INFO] NOTIFYPLEX: TESTING PMS CONNECTION AND AUTHORIZATION')
+
+	test_params = {
+		'X-Plex-Token': get_auth_token(plex_username, plex_password)
+	}
+
+	test_url = 'http://{}/library/sections'.format(plex_test_ip)
+	try:
+		test_request = requests.get(test_url, params=test_params, timeout=10)
+	except requests.exceptions.RequestException or OSError:
+		requests.session().close()
+		print('[ERROR] NOTIFYPLEX: ERROR CONNECTING TO PMS. CHECK CONNECTION DETAILS AND RE-TRY TEST')
+		sys.exit(POSTPROCESS_ERROR)
+	if test_request.status_code == 200:
+		print('[INFO] NOTIFYPLEX: TEST SUCCESSFUL!')
+		sys.exit(POSTPROCESS_SUCCESS)
+	else:
+		print('[ERROR] NOTIFYPLEX: AUTHORIZATION SUCCESS BUT PMS CONNECTION FAILED. CHECK CONNECTION DETAILS AND RE-TRY TEST')
+		sys.exit(POSTPROCESS_ERROR)
+
+
+dnzboptions = ('NZBPR__DNZB_PROPERNAME', 'NZBPR__DNZB_EPISODENAME', 'NZBPR__DNZB_MOVIEYEAR')
+if dnzboptions[0] in os.environ:
+	proper_name = os.environ[dnzboptions[0]]
+else:
+	proper_name = ''
+if dnzboptions[1] in os.environ:
+	proper_ep = os.environ[dnzboptions[1]]
+else:
+	proper_ep = ''
+if dnzboptions[2] in os.environ:
+	proper_year = os.environ[dnzboptions[2]]
+else:
+	proper_year = ''
+
+nzb_name = os.environ['NZBPP_NZBNAME']
+nzb_cat = os.environ['NZBPP_CATEGORY']
+gui_show = os.environ['NZBPO_GUISHOW'] == 'yes'
+refresh_library = os.environ['NZBPO_REFRESHLIBRARY'] == 'yes'
+refresh_mode = os.environ['NZBPO_REFRESHMODE']
+silent_mode = os.environ['NZBPO_SILENTFAILURE'] == 'yes'
 
 
 def refresh_auto(movie_cats, tv_cats, plex_ip):
@@ -195,7 +227,8 @@ def refresh_auto(movie_cats, tv_cats, plex_ip):
 	try:
 		section_request = requests.get(url, params=params, timeout=10)
 		section_response = section_request.content
-	except requests.exceptions.Timeout or requests.exceptions.HTTPError or requests.exceptions.ConnectionError:
+	except requests.exceptions.RequestException or OSError:
+		requests.session().close()
 		if silent_mode:
 			print('[WARNING] NOTIFYPLEX: ERROR AUTO-DETECTING PLEX SECTIONS. SILENT FAILURE MODE ACTIVATED')
 			sys.exit(POSTPROCESS_SUCCESS)
@@ -220,7 +253,8 @@ def refresh_auto(movie_cats, tv_cats, plex_ip):
 				refresh_url = 'http://{}/library/sections/{}/refresh'.format(plex_ip, tv_section)
 				try:
 					requests.get(refresh_url, params=params, timeout=10)
-				except requests.Timeout or requests.ConnectionError or requests.HTTPError:
+				except requests.exceptions.RequestException or OSError:
+					requests.session().close()
 					if silent_mode:
 						print('[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION {}. SILENT FAILURE MODE ACTIVATED'.format(tv_section))
 						sys.exit(POSTPROCESS_SUCCESS)
@@ -235,7 +269,8 @@ def refresh_auto(movie_cats, tv_cats, plex_ip):
 				section_url = 'http://{}/library/sections/{}/refresh'.format(plex_ip, movie_section)
 				try:
 					requests.get(section_url, params=params, timeout=10)
-				except requests.Timeout or requests.ConnectionError or requests.HTTPError:
+				except requests.exceptions.RequestException or OSError:
+					requests.session().close()
 					if silent_mode:
 						print('[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION {}. SILENT FAILURE MODE ACTIVATED'.format(movie_section))
 						sys.exit(POSTPROCESS_SUCCESS)
@@ -258,7 +293,8 @@ def refresh_custom_sections(raw_plex_sections, plex_ip):
 		section_url = 'http://%s/library/sections/%s/refresh' % (plex_ip, plex_section)
 		try:
 			requests.get(section_url, params=params, timeout=10)
-		except requests.exceptions.Timeout or requests.exceptions.HTTPError or requests.exceptions.ConnectionError:
+		except requests.exceptions.RequestException or OSError:
+			requests.session().close()
 			if silent_mode:
 				print('[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION %s. SILENT FAILURE MODE ACTIVATED' % plex_section)
 				sys.exit(POSTPROCESS_SUCCESS)
@@ -292,9 +328,25 @@ def show_gui_notification(raw_pht_ips):
 		try:
 			requests.post(pht_rpc_url, data=json.dumps(payload), headers=headers, timeout=10)
 			print('[INFO] NOTIFYPLEX: GUI NOTIFICATION TO PHT INSTANCE SUCCESSFUL')
-		except requests.exceptions.Timeout or requests.exceptions.HTTPError or requests.exceptions.ConnectionError:
+		except requests.exceptions.RequestException or OSError:
+			requests.session().close()
 			print('[WARNING] NOTIFYPLEX: PHT GUI NOTIFICATION FAILED')
 
+
+if 'NZBPP_STATUS' not in os.environ:
+	print('*** NZBGet post-processing script ***')
+	print('This script is supposed to be called from NZBGet v13.0 or later.')
+	sys.exit(POSTPROCESS_ERROR)
+
+required_options = ('NZBPO_PLEXIP', 'NZBPO_SILENTFAILURE', 'NZBPO_MOVIESCAT', 'NZBPO_TVCAT', 'NZBPO_REFRESHMODE', 'NZBPO_REFRESHLIBRARY', 'NZBPO_DHEADERS', 'NZBPO_GUISHOW', 'NZBPO_PLEXUSER', 'NZBPO_PLEXPASS')
+
+for optname in required_options:
+	if optname not in os.environ:
+		print('[ERROR] NOTIFYPLEX: OPTION {} IS MISSING IN CONFIGURATION FILE. PLEASE CHECK SCRIPT SETTINGS'.format(optname[6:]))
+		sys.exit(POSTPROCESS_ERROR)
+
+# Check to see if download was successful
+pp_status = os.environ['NZBPP_STATUS'].startswith('SUCCESS/')
 
 if pp_status:
 
