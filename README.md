@@ -33,6 +33,8 @@ This post-processing script requires python3 and the 'requests' module to be ins
 
 `chmod +x NotifyPlex.py`
 
+* **NOTE:** Making the script executable may register as a change to the file and prevent you from performing updates via `git pull`. You can tell git to ignore file mode changes by doing `git config core.fileMode false` 
+
 * Set permissions on NotifyPlex folder inside scripts directory. Script should have write privileges in order to store auth token
 
 * Configure variables within NZBGet Web UI
