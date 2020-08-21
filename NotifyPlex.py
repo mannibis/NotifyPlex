@@ -158,8 +158,11 @@ def get_auth_token(plex_user, plex_pass):
 			plex_auth_token = root.attrib['authToken']
 			plex_dict = {'auth_token': plex_auth_token}
 			print('[INFO] NOTIFYPLEX: plex.tv AUTHENTICATION SUCCESSFUL. STORING AUTH TOKEN TO DISK')
-			with open(plex_auth_path, 'wb') as f:
-				pickle.dump(plex_dict, f)
+			try:
+				with open(plex_auth_path, 'wb') as f:
+					pickle.dump(plex_dict, f)
+			except PermissionError:
+				print('[WARNING] NOTIFYPLEX: CANNOT WRITE TO DISK. PLEASE SET PROPER PERMISSIONS ON YOUR NOTIFYPLEX FOLDER IF YOU WANT TO STORE AUTH TOKEN')
 			return plex_auth_token
 		except KeyError:
 			if silent_mode:
