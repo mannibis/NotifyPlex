@@ -137,7 +137,7 @@ def get_auth_token(plex_user, plex_pass):
 			return plex_auth_token
 		except KeyError:
 			if test_mode:
-				print('[ERROR] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv SERVERS. CHECK USERNAME/PASSWORD AND RE-TRY TEST')
+				print('[ERROR] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv SERVERS. CHECK USERNAME/PASSWORD AND RETRY TEST')
 				sys.exit(POSTPROCESS_ERROR)
 			if silent_mode:
 				print('[WARNING] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv SERVERS. SILENT FAILURE MODE ACTIVATED')
@@ -180,13 +180,13 @@ if test_mode:
 		test_request = requests.get(test_url, params=test_params, timeout=10)
 	except requests.exceptions.RequestException or OSError:
 		requests.session().close()
-		print('[ERROR] NOTIFYPLEX: ERROR CONNECTING TO PMS. CHECK CONNECTION DETAILS AND RE-TRY TEST')
+		print('[ERROR] NOTIFYPLEX: ERROR CONNECTING TO PMS. CHECK CONNECTION DETAILS AND RETRY TEST')
 		sys.exit(POSTPROCESS_ERROR)
 	if test_request.status_code == 200:
 		print('[INFO] NOTIFYPLEX: TEST SUCCESSFUL!')
 		sys.exit(POSTPROCESS_SUCCESS)
 	else:
-		print('[ERROR] NOTIFYPLEX: AUTHORIZATION SUCCESS BUT PMS CONNECTION FAILED. CHECK CONNECTION DETAILS AND RE-TRY TEST')
+		print('[ERROR] NOTIFYPLEX: AUTHORIZATION SUCCESSFUL BUT PMS CONNECTION FAILED. CHECK CONNECTION DETAILS AND RETRY TEST')
 		sys.exit(POSTPROCESS_ERROR)
 
 
@@ -223,9 +223,9 @@ def refresh_auto(movie_cats, tv_cats, plex_ip):
 		'X-Plex-Token': get_auth_token(plex_username, plex_password)
 	}
 
-	url = 'http://{}/library/sections'.format(plex_ip)
+	section_url = 'http://{}/library/sections'.format(plex_ip)
 	try:
-		section_request = requests.get(url, params=params, timeout=10)
+		section_request = requests.get(section_url, params=params, timeout=10)
 		section_response = section_request.content
 	except requests.exceptions.RequestException or OSError:
 		requests.session().close()
@@ -267,9 +267,9 @@ def refresh_auto(movie_cats, tv_cats, plex_ip):
 		for movie_cat in movie_cats_split:
 			if nzb_cat == movie_cat:
 				for movie_section in movie_sections:
-					section_url = 'http://{}/library/sections/{}/refresh'.format(plex_ip, movie_section)
+					refresh_url = 'http://{}/library/sections/{}/refresh'.format(plex_ip, movie_section)
 					try:
-						requests.get(section_url, params=params, timeout=10)
+						requests.get(refresh_url, params=params, timeout=10)
 					except requests.exceptions.RequestException or OSError:
 						requests.session().close()
 						if silent_mode:
@@ -301,9 +301,9 @@ def refresh_custom_sections(raw_plex_sections, plex_ip):
 	}
 
 	for plex_section in plex_sections_split:
-		section_url = 'http://%s/library/sections/%s/refresh' % (plex_ip, plex_section)
+		refresh_url = 'http://%s/library/sections/%s/refresh' % (plex_ip, plex_section)
 		try:
-			requests.get(section_url, params=params, timeout=10)
+			requests.get(refresh_url, params=params, timeout=10)
 		except requests.exceptions.RequestException or OSError:
 			requests.session().close()
 			if silent_mode:
