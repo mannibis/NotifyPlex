@@ -21,6 +21,8 @@ This post-processing script requires python3 and the 'requests' module to be ins
 
 * Useful for libraries stored on NAS shares where PMS cannot detect changes
 
+* Test connection before running script from NotifyPlex settings in NZBGET Web UI
+
 ## Installation 
 
 * Clone repository into your NZBGet scripts directory
@@ -36,6 +38,8 @@ This post-processing script requires python3 and the 'requests' module to be ins
 * Configure variables within NZBGet Web UI
 
 * Enable script in Category or Extension Scripts NZBGet settings
+
+* Optionally test PMS connection and plex.tv authorization by pressing 'Test PMS Connection' button on settings page
 
 **NOTE:** Plex Username and Password are only required to fetch auth token, which will be stored inside your NotifyPlex folder and subsequently re-used
 
