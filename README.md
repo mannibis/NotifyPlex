@@ -31,12 +31,28 @@ This post-processing script requires python3 and the 'requests' module to be ins
 
 * Set permissions on NotifyPlex folder inside scripts directory. Script should have write privileges in order to store auth token
 
-* Configure variables within NZBGet Web UI
+* Configure variables within NZBGet Web UI. Select Library Refresh Mode:
+
+    * **Auto:** This mode will use the NZBGet categories specified in the 'moviesCat' and 'tvCat' sections
+    and when detected, will refresh the Plex sections associated with TV Shows or Movies automatically
+    
+    * **Custom:** This mode will use the numerical section numbers specified in the customPlexSection
+    option and refresh all of them upon successful download
+    
+    * **Both:** This mode will use both the Auto and Custom modes
+    
+    * **Advanced:** This mode is for advanced users and will refresh Plex sections according to 
+    a custom category:section_title mapping specified in the 'sectionMapping' option. Only one plex section
+    will be refreshed depending on the NZBGet category. *Example:* `movies:Movies,uhd:Movies 4K,tv:TV Shows`
+    will only refresh the "Movies" library if the NZBGet category detected was "movies", and so on.  The Plex 
+    library names should match exactly as shown in your Plex server.
 
 * Enable script in Category or Extension Scripts NZBGet settings
 
 * Optionally test PMS connection and plex.tv authorization by pressing 'Test PMS Connection' button on settings page
 
-**NOTE:** Plex Username and Password are only required to fetch auth token, which will be stored inside your NotifyPlex folder and subsequently re-used
+**NOTE:** Plex Username and Password are only required to fetch auth token, which will be stored inside your NotifyPlex 
+folder and subsequently re-used
 
-**NOTE 2:** In the case that the auth token becomes invalid and library refreshes do not work, simply delete the 'plex_auth.ini' file inside your NotifyPlex folder and re-run the script. This will force another sign-in and store a new auth token
+**NOTE 2:** In the case that the auth token becomes invalid and library refreshes do not work, simply delete the 
+`plex_auth.ini` file inside your NotifyPlex folder and re-run the script. This will force another sign-in and store a new auth token
