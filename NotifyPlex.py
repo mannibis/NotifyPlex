@@ -349,7 +349,7 @@ if 'NZBPP_STATUS' not in os.environ:
 	print('This script is supposed to be called from NZBGet v13.0 or later.')
 	sys.exit(POSTPROCESS_ERROR)
 
-required_options = ('NZBPO_PLEXIP', 'NZBPO_SILENTFAILURE', 'NZBPO_MOVIESCAT', 'NZBPO_TVCAT', 'NZBPO_REFRESHMODE', 'NZBPO_REFRESHLIBRARY', 'NZBPO_DHEADERS', 'NZBPO_GUISHOW', 'NZBPO_PLEXUSER', 'NZBPO_PLEXPASS')
+required_options = ('NZBPO_PLEXIP', 'NZBPO_SILENTFAILURE', 'NZBPO_MOVIESCAT', 'NZBPO_TVCAT', 'NZBPO_REFRESHMODE', 'NZBPO_REFRESHLIBRARY', 'NZBPO_DHEADERS', 'NZBPO_GUISHOW')
 
 for optname in required_options:
 	if optname not in os.environ:
