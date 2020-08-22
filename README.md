@@ -36,7 +36,7 @@ This post-processing script requires python3 and the 'requests' module to be ins
     * **Auto:** This mode will use the NZBGet categories specified in the 'moviesCat' and 'tvCat' sections
     and when detected, will refresh the Plex sections associated with TV Shows or Movies automatically
     
-    * **Custom:** This mode will use the numerical section numbers specified in the customPlexSection
+    * **Custom:** This mode will use the numerical section numbers specified in the 'customPlexSection'
     option and refresh all of them upon successful download
     
     * **Both:** This mode will use both the Auto and Custom modes
