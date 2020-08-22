@@ -9,7 +9,7 @@
 # Auto-Detection of NZBGet category and Plex sections is now supported. This script also works with Plex Home enabled.
 #
 # Copyright (C) 2020 mannibis
-# Version 3.1
+# Version 3.2
 #
 #
 # NOTE: This script requires Python 3.x and the "requests" module to be installed on your system.
@@ -49,9 +49,11 @@
 # To test Plex Media Server connection and authorization, Save IP:Port, username, and password settings and click button.
 #ConnectionTest@Test PMS Connection
 
-# Library Refresh Mode (Auto,Custom,Both).
+# Library Refresh Mode (Auto,Custom,Both,Advanced).
 #
-# Select Refresh Mode: Auto will automatically detect your NZBGet category and refresh the appropriate sections, Custom will only refresh the sections you input into the Custom sections setting below, Both will auto-detect and refresh the Custom Sections
+# Select Refresh Mode: Auto will automatically detect your NZBGet category and refresh the appropriate sections,
+# Custom will only refresh the sections you input into the Custom sections setting below, Both will auto-detect and refresh the Custom Sections,
+# Advanced will use the section mapping specified in the sectionMapping option and only refresh one specific section
 #refreshMode=Auto
 
 # NZBGet Movies Category/Categories [Required for Auto Mode].
@@ -68,6 +70,14 @@
 #
 # Section Number(s) corresponding to your Plex library (comma separated). These sections will only refreshed if Library Refesh Mode is set to Custom or Both
 #customPlexSection=
+
+# Advanced Section Mapping [Optional].
+#
+# Comma separated list of NZBGet categories mapped to Plex library names. Example: movies:Movies,uhd:4K Movies,tv:TV Shows
+# To use this mode, select Advanced as your Library Refresh Mode. Only specific Plex libraries will be refreshed
+# according to the NZBGet category used. Enter the exact names of your NZBGet categories and the exact names of your Plex libraries
+#
+#sectionMapping=
 
 ## Plex Home Theater
 
@@ -102,7 +112,7 @@ notifyplex_directory = os.path.dirname(os.path.realpath(__file__))
 plex_auth_path = os.path.join(script_dir, notifyplex_directory, 'plex_auth.ini')
 
 
-def get_auth_token(plex_user, plex_pass):
+def get_auth_token():
 	if os.path.isfile(plex_auth_path) and not test_mode:
 		with open(plex_auth_path, 'rb') as f:
 			plex_dict = pickle.load(f)
@@ -110,13 +120,13 @@ def get_auth_token(plex_user, plex_pass):
 		return plex_dict.get('auth_token')
 
 	auth_url = 'https://my.plexapp.com/users/sign_in.xml'
-	auth_params = {'user[login]': plex_user, 'user[password]': plex_pass}
+	auth_params = {'user[login]': plex_username, 'user[password]': plex_password}
 	headers = {
 			'X-Plex-Platform': 'NZBGet',
 			'X-Plex-Platform-Version': '21.0',
 			'X-Plex-Provides': 'controller',
 			'X-Plex-Product': 'NotifyPlex',
-			'X-Plex-Version': "3.0",
+			'X-Plex-Version': "3.2",
 			'X-Plex-Device': 'NZBGet',
 			'X-Plex-Client-Identifier': '12286'
 	}
@@ -133,7 +143,8 @@ def get_auth_token(plex_user, plex_pass):
 					with open(plex_auth_path, 'wb') as f:
 						pickle.dump(plex_dict, f)
 				except PermissionError:
-					print('[WARNING] NOTIFYPLEX: CANNOT WRITE TO DISK. PLEASE SET PROPER PERMISSIONS ON YOUR NOTIFYPLEX FOLDER IF YOU WANT TO STORE AUTH TOKEN')
+					print('[WARNING] NOTIFYPLEX: CANNOT WRITE TO DISK. PLEASE SET PROPER PERMISSIONS ON YOUR NOTIFYPLEX '
+							'FOLDER IF YOU WANT TO STORE AUTH TOKEN')
 			return plex_auth_token
 		except KeyError:
 			if test_mode:
@@ -172,7 +183,7 @@ if test_mode:
 	print('[INFO] NOTIFYPLEX: TESTING PMS CONNECTION AND AUTHORIZATION')
 
 	test_params = {
-		'X-Plex-Token': get_auth_token(plex_username, plex_password)
+		'X-Plex-Token': get_auth_token()
 	}
 
 	test_url = 'http://{}/library/sections'.format(plex_test_ip)
@@ -186,7 +197,8 @@ if test_mode:
 		print('[INFO] NOTIFYPLEX: TEST SUCCESSFUL!')
 		sys.exit(POSTPROCESS_SUCCESS)
 	else:
-		print('[ERROR] NOTIFYPLEX: AUTHORIZATION SUCCESSFUL BUT PMS CONNECTION FAILED. CHECK CONNECTION DETAILS AND RETRY TEST')
+		print('[ERROR] NOTIFYPLEX: AUTHORIZATION SUCCESSFUL BUT PMS CONNECTION FAILED. CHECK CONNECTION DETAILS AND '
+				'RETRY TEST')
 		sys.exit(POSTPROCESS_ERROR)
 
 
@@ -210,6 +222,77 @@ gui_show = os.environ['NZBPO_GUISHOW'] == 'yes'
 refresh_library = os.environ['NZBPO_REFRESHLIBRARY'] == 'yes'
 refresh_mode = os.environ['NZBPO_REFRESHMODE']
 silent_mode = os.environ['NZBPO_SILENTFAILURE'] == 'yes'
+section_mapping = os.environ['NZBPO_SECTIONMAPPING']
+
+
+def refresh_advanced(mapping, plex_ip):
+
+	category = None
+	plex_section_title = None
+	section_key = None
+	section_map_list = mapping.split(',')
+	for section_map in section_map_list:
+		section_map = section_map.strip(' ')
+		map_category = section_map.split(':')[0]
+		if nzb_cat.lower() == map_category.lower():
+			category = map_category
+			plex_section_title = section_map.split(':')[1]
+			break
+	if category is None or plex_section_title is None:
+		print('[ERROR] NOTIFYPLEX: ERROR DETECTING NZBGET CATEGORY OR PLEX SECTION TITLE. PLEASE MAKE SURE YOUR SECTION '
+				'MAPPING IS CORRECT AND TRY AGAIN')
+		sys.exit(POSTPROCESS_ERROR)
+
+	params = {
+		'X-Plex-Token': get_auth_token()
+	}
+	section_url = 'http://{}/library/sections'.format(plex_ip)
+	try:
+		section_request = requests.get(section_url, params=params, timeout=10)
+		section_response = section_request.content
+	except requests.exceptions.RequestException or OSError:
+		requests.session().close()
+		if silent_mode:
+			print('[WARNING] NOTIFYPLEX: ERROR AUTO-DETECTING PLEX SECTIONS. SILENT FAILURE MODE ACTIVATED')
+			sys.exit(POSTPROCESS_SUCCESS)
+		else:
+			print('[ERROR] NOTIFYPLEX: ERROR AUTO-DETECTING PLEX SECTIONS. CHECK CONNECTION DETAILS AND TRY AGAIN')
+			sys.exit(POSTPROCESS_ERROR)
+
+	if section_request.status_code == 200:
+		root = ET.fromstring(section_response)
+		for directory in root.findall('Directory'):
+			section_title = directory.get('title')
+			if section_title.lower() == plex_section_title.lower():
+				section_key = directory.get('key')
+				break
+		if section_key is None:
+			print('[ERROR] NOTIFYPLEX: PLEX SECTION NOT FOUND. PLEASE MAKE SURE YOUR SECTION MAPPING IS CORRECT AND TRY AGAIN')
+			sys.exit(POSTPROCESS_ERROR)
+		refresh_url = 'http://{}/library/sections/{}/refresh'.format(plex_ip, section_key)
+		try:
+			requests.get(refresh_url, params=params, timeout=10)
+		except requests.exceptions.RequestException or OSError:
+			requests.session().close()
+			if silent_mode:
+				print(
+					'[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION {}. SILENT FAILURE MODE ACTIVATED'.format(section_key))
+				sys.exit(POSTPROCESS_SUCCESS)
+			else:
+				print('[ERROR] NOTIFYPLEX: ERROR UPDATING SECTION {}. CHECK CONNECTION DETAILS AND TRY AGAIN'.format(section_key))
+				sys.exit(POSTPROCESS_ERROR)
+		print('[INFO] NOTIFYPLEX: TARGETED PLEX UPDATE FOR SECTION {} COMPLETE'.format(section_key))
+
+	elif section_request.status_code == 401:
+		if os.path.isfile(plex_auth_path):
+			os.remove(plex_auth_path)
+		if silent_mode:
+			print('[WARNING] NOTIFYPLEX: AUTHORIZATION ERROR. PLEASE RE-RUN SCRIPT TO GENERATE NEW TOKEN. SILENT '
+					'FAILURE MODE ACTIVATED')
+			sys.exit(POSTPROCESS_SUCCESS)
+		else:
+			print('[ERROR] NOTIFYPLEX: AUTHORIZATION ERROR. TOKEN MAY BE INVALID. PLEASE RE-RUN SCRIPT TO GENERATE NEW TOKEN')
+			sys.exit(POSTPROCESS_ERROR)
 
 
 def refresh_auto(movie_cats, tv_cats, plex_ip):
@@ -220,9 +303,8 @@ def refresh_auto(movie_cats, tv_cats, plex_ip):
 	tv_cats_split = tv_cats.split(',')
 
 	params = {
-		'X-Plex-Token': get_auth_token(plex_username, plex_password)
+		'X-Plex-Token': get_auth_token()
 	}
-
 	section_url = 'http://{}/library/sections'.format(plex_ip)
 	try:
 		section_request = requests.get(section_url, params=params, timeout=10)
@@ -297,7 +379,7 @@ def refresh_custom_sections(raw_plex_sections, plex_ip):
 	plex_sections_split = plex_sections.split(',')
 
 	params = {
-		'X-Plex-Token': get_auth_token(plex_username, plex_password)
+		'X-Plex-Token': get_auth_token()
 	}
 
 	for plex_section in plex_sections_split:
@@ -375,6 +457,8 @@ if pp_status:
 			refresh_custom_sections(raw_plex_section, plex_ip)
 		elif refresh_mode == 'Auto':
 			refresh_auto(movie_cats, tv_cats, plex_ip)
+		elif refresh_mode == 'Advanced':
+			refresh_advanced(section_mapping, plex_ip)
 		else:
 			refresh_custom_sections(raw_plex_section, plex_ip)
 			refresh_auto(movie_cats, tv_cats, plex_ip)
