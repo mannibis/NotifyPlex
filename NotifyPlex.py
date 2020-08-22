@@ -103,7 +103,7 @@ plex_auth_path = os.path.join(script_dir, notifyplex_directory, 'plex_auth.ini')
 
 
 def get_auth_token(plex_user, plex_pass):
-	if os.path.isfile(plex_auth_path):
+	if os.path.isfile(plex_auth_path) and not test_mode:
 		with open(plex_auth_path, 'rb') as f:
 			plex_dict = pickle.load(f)
 		print('[INFO] NOTIFYPLEX: USING STORED PLEX AUTH TOKEN. BYPASSING plex.tv')
