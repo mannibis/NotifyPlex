@@ -9,7 +9,7 @@
 # Auto-Detection of NZBGet category and Plex sections is now supported. This script also works with Plex Home enabled.
 #
 # Copyright (C) 2020 mannibis
-# Version 3.2
+# Version 3.3
 #
 #
 # NOTE: This script requires Python 3.x and the "requests" module to be installed on your system.
@@ -79,6 +79,9 @@
 #
 #sectionMapping=
 
+# Click button to grab list of your Plex libraries and corresponding section numbers.
+#SectionList@Get Plex Sections
+
 ## Plex Home Theater
 
 # Plex Home Theater Settings [Optional].
@@ -107,6 +110,7 @@ POSTPROCESS_NONE = 95
 
 plex_username = os.environ['NZBPO_PLEXUSER']
 plex_password = os.environ['NZBPO_PLEXPASS']
+plex_ip = os.environ['NZBPO_PLEXIP']
 script_dir = os.environ['NZBOP_SCRIPTDIR']
 notifyplex_directory = os.path.dirname(os.path.realpath(__file__))
 plex_auth_path = os.path.join(script_dir, notifyplex_directory, 'plex_auth.ini')
@@ -116,7 +120,7 @@ def get_auth_token():
 	if os.path.isfile(plex_auth_path) and not test_mode:
 		with open(plex_auth_path, 'rb') as f:
 			plex_dict = pickle.load(f)
-		print('[INFO] NOTIFYPLEX: USING STORED PLEX AUTH TOKEN. BYPASSING plex.tv')
+		print('[INFO] USING STORED PLEX AUTH TOKEN. BYPASSING plex.tv')
 		return plex_dict.get('auth_token')
 
 	auth_url = 'https://my.plexapp.com/users/sign_in.xml'
@@ -126,7 +130,7 @@ def get_auth_token():
 			'X-Plex-Platform-Version': '21.0',
 			'X-Plex-Provides': 'controller',
 			'X-Plex-Product': 'NotifyPlex',
-			'X-Plex-Version': "3.2",
+			'X-Plex-Version': "3.3",
 			'X-Plex-Device': 'NZBGet',
 			'X-Plex-Client-Identifier': '12286'
 	}
@@ -138,66 +142,124 @@ def get_auth_token():
 			plex_auth_token = root.attrib['authToken']
 			plex_dict = {'auth_token': plex_auth_token}
 			if not test_mode:
-				print('[INFO] NOTIFYPLEX: plex.tv AUTHENTICATION SUCCESSFUL. STORING AUTH TOKEN TO DISK')
+				print('[INFO] plex.tv AUTHENTICATION SUCCESSFUL. STORING AUTH TOKEN TO DISK')
 				try:
 					with open(plex_auth_path, 'wb') as f:
 						pickle.dump(plex_dict, f)
 				except PermissionError:
-					print('[WARNING] NOTIFYPLEX: CANNOT WRITE TO DISK. PLEASE SET PROPER PERMISSIONS ON YOUR NOTIFYPLEX '
+					print('[WARNING] CANNOT WRITE TO DISK. PLEASE SET PROPER PERMISSIONS ON YOUR NOTIFYPLEX '
 							'FOLDER IF YOU WANT TO STORE AUTH TOKEN')
 			return plex_auth_token
 		except KeyError:
 			if test_mode:
-				print('[ERROR] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv SERVERS. CHECK USERNAME/PASSWORD AND RETRY TEST')
+				print('[ERROR] ERROR AUTHENTICATING WITH plex.tv SERVERS. CHECK USERNAME/PASSWORD AND RETRY TEST')
 				sys.exit(POSTPROCESS_ERROR)
 			if silent_mode:
-				print('[WARNING] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv SERVERS. SILENT FAILURE MODE ACTIVATED')
+				print('[WARNING] ERROR AUTHENTICATING WITH plex.tv SERVERS. SILENT FAILURE MODE ACTIVATED')
 				sys.exit(POSTPROCESS_SUCCESS)
 			else:
-				print('[ERROR] NOTIFYPLEX: ERROR AUTHENTICATING WITH plex.tv SERVERS. TRY AGAIN')
+				print('[ERROR] ERROR AUTHENTICATING WITH plex.tv SERVERS. TRY AGAIN')
 				sys.exit(POSTPROCESS_ERROR)
 	except requests.exceptions.RequestException or OSError:
 		requests.session().close()
 		if silent_mode:
-			print('[WARNING] NOTIFYPLEX: ERROR CONNECTING WITH plex.tv SERVERS. SILENT FAILURE MODE ACTIVATED')
+			print('[WARNING] ERROR CONNECTING WITH plex.tv SERVERS. SILENT FAILURE MODE ACTIVATED')
 			sys.exit(POSTPROCESS_SUCCESS)
 		else:
-			print('[ERROR] NOTIFYPLEX: ERROR CONNECTING WITH plex.tv SERVERS. TRY AGAIN')
+			print('[ERROR] ERROR CONNECTING WITH plex.tv SERVERS. TRY AGAIN')
+			sys.exit(POSTPROCESS_ERROR)
+
+
+def get_plex_sections():
+	global params
+	params = {
+		'X-Plex-Token': get_auth_token()
+	}
+	section_url = 'http://{}/library/sections'.format(plex_ip)
+	try:
+		section_request = requests.get(section_url, params=params, timeout=10)
+		section_response = section_request.content
+	except requests.exceptions.RequestException or OSError:
+		requests.session().close()
+		if silent_mode:
+			print('[WARNING] ERROR AUTO-DETECTING PLEX SECTIONS. SILENT FAILURE MODE ACTIVATED')
+			sys.exit(POSTPROCESS_SUCCESS)
+		else:
+			print('[ERROR] ERROR AUTO-DETECTING PLEX SECTIONS. CHECK CONNECTION DETAILS AND TRY AGAIN')
+			sys.exit(POSTPROCESS_ERROR)
+
+	if section_request.status_code == 200:
+		return section_request.content
+	elif section_request.status_code == 401:
+		if os.path.isfile(plex_auth_path):
+			os.remove(plex_auth_path)
+		if silent_mode:
+			print('[WARNING] AUTHORIZATION ERROR. PLEASE RE-RUN SCRIPT TO GENERATE NEW TOKEN. SILENT '
+					'FAILURE MODE ACTIVATED')
+			sys.exit(POSTPROCESS_SUCCESS)
+		else:
+			print('[ERROR] AUTHORIZATION ERROR. TOKEN MAY BE INVALID. PLEASE RE-RUN SCRIPT TO GENERATE NEW TOKEN')
 			sys.exit(POSTPROCESS_ERROR)
 
 
 command = os.environ.get('NZBCP_COMMAND')
 test_mode = command == 'ConnectionTest'
+list_sections_mode = command == 'SectionList'
 
-if (command is not None) and (not test_mode):
-	print('[ERROR] NOTIFYPLEX: INVALID COMMAND ' + command)
+if (command is not None) and (not test_mode) and (not list_sections_mode):
+	print('[ERROR] INVALID COMMAND ' + command)
 	sys.exit(POSTPROCESS_ERROR)
+if list_sections_mode:
+	sections_title_list = []
+	sections_number_list = []
+	sections_type_list = []
+	section_count = 0
+	required_test_option = ('NZBPO_PLEXIP')
+
+	if required_test_option not in os.environ:
+		print('[ERROR] OPTION {} IS MISSING IN CONFIGURATION FILE. PLEASE CHECK SCRIPT SETTINGS'.format(optname[6:]))
+		sys.exit(POSTPROCESS_ERROR)
+
+	plex_test_ip = os.environ['NZBPO_PLEXIP']
+
+	print('[INFO] GRABBING LIST OF PLEX LIBRARIES AND SECTION NUMBERS')
+
+	root = ET.fromstring(get_plex_sections())
+	for directory in root.findall('Directory'):
+		sections_title_list.append(directory.get('title'))
+		sections_number_list.append(directory.get('key'))
+		sections_type_list.append(directory.get('type'))
+		section_count += 1
+	print('[INFO] YOU HAVE A TOTAL OF {} SECTIONS'.format(section_count))
+	for i in range(len(sections_title_list)):
+		print('[INFO] SECTION {}: {}, type={}'.format(sections_number_list[i], sections_title_list[i], sections_type_list[i]))
+	sys.exit(POSTPROCESS_SUCCESS)
+
 if test_mode:
 	required_test_options = ('NZBPO_PLEXUSER', 'NZBPO_PLEXPASS', 'NZBPO_PLEXIP')
-	plex_test_ip = os.environ['NZBPO_PLEXIP']
 	for optname in required_test_options:
 		if optname not in os.environ:
-			print('[ERROR] NOTIFYPLEX: OPTION {} IS MISSING IN CONFIGURATION FILE. PLEASE CHECK SCRIPT SETTINGS'.format(optname[6:]))
+			print('[ERROR] OPTION {} IS MISSING IN CONFIGURATION FILE. PLEASE CHECK SCRIPT SETTINGS'.format(optname[6:]))
 			sys.exit(POSTPROCESS_ERROR)
+	plex_test_ip = os.environ['NZBPO_PLEXIP']
 
-	print('[INFO] NOTIFYPLEX: TESTING PMS CONNECTION AND AUTHORIZATION')
+	print('[INFO] TESTING PMS CONNECTION AND AUTHORIZATION')
 
 	test_params = {
 		'X-Plex-Token': get_auth_token()
 	}
-
 	test_url = 'http://{}/library/sections'.format(plex_test_ip)
 	try:
 		test_request = requests.get(test_url, params=test_params, timeout=10)
 	except requests.exceptions.RequestException or OSError:
 		requests.session().close()
-		print('[ERROR] NOTIFYPLEX: ERROR CONNECTING TO PMS. CHECK CONNECTION DETAILS AND RETRY TEST')
+		print('[ERROR] ERROR CONNECTING TO PMS. CHECK CONNECTION DETAILS AND RETRY TEST')
 		sys.exit(POSTPROCESS_ERROR)
 	if test_request.status_code == 200:
-		print('[INFO] NOTIFYPLEX: TEST SUCCESSFUL!')
+		print('[INFO] CONNECTION TEST SUCCESSFUL!')
 		sys.exit(POSTPROCESS_SUCCESS)
 	else:
-		print('[ERROR] NOTIFYPLEX: AUTHORIZATION ERROR. CHECK CONNECTION DETAILS AND RETRY TEST')
+		print('[ERROR] AUTHORIZATION ERROR. CHECK CONNECTION DETAILS AND RETRY TEST')
 		sys.exit(POSTPROCESS_ERROR)
 
 
@@ -224,7 +286,7 @@ silent_mode = os.environ['NZBPO_SILENTFAILURE'] == 'yes'
 section_mapping = os.environ['NZBPO_SECTIONMAPPING']
 
 
-def refresh_advanced(mapping, plex_ip):
+def refresh_advanced(mapping):
 
 	category = None
 	plex_section_title = None
@@ -238,148 +300,90 @@ def refresh_advanced(mapping, plex_ip):
 			plex_section_title = section_map.split(':')[1]
 			break
 	if category is None or plex_section_title is None:
-		print('[ERROR] NOTIFYPLEX: ERROR DETECTING NZBGET CATEGORY OR PLEX SECTION TITLE. PLEASE MAKE SURE YOUR SECTION '
+		print('[ERROR] ERROR DETECTING NZBGET CATEGORY OR PLEX SECTION TITLE. PLEASE MAKE SURE YOUR SECTION '
 				'MAPPING IS CORRECT AND TRY AGAIN')
 		sys.exit(POSTPROCESS_ERROR)
 
-	params = {
-		'X-Plex-Token': get_auth_token()
-	}
-	section_url = 'http://{}/library/sections'.format(plex_ip)
+	root = ET.fromstring(get_plex_sections())
+	for directory in root.findall('Directory'):
+		section_title = directory.get('title')
+		if section_title.lower() == plex_section_title.lower():
+			section_key = directory.get('key')
+			break
+	if section_key is None:
+		print('[ERROR] PLEX SECTION NOT FOUND. PLEASE MAKE SURE YOUR SECTION MAPPING IS CORRECT AND TRY AGAIN')
+		sys.exit(POSTPROCESS_ERROR)
+
+	refresh_url = 'http://{}/library/sections/{}/refresh'.format(plex_ip, section_key)
 	try:
-		section_request = requests.get(section_url, params=params, timeout=10)
-		section_response = section_request.content
+		requests.get(refresh_url, params=params, timeout=10)
 	except requests.exceptions.RequestException or OSError:
 		requests.session().close()
 		if silent_mode:
-			print('[WARNING] NOTIFYPLEX: ERROR AUTO-DETECTING PLEX SECTIONS. SILENT FAILURE MODE ACTIVATED')
+			print(
+				'[WARNING] ERROR UPDATING SECTION {}. SILENT FAILURE MODE ACTIVATED'.format(section_key))
 			sys.exit(POSTPROCESS_SUCCESS)
 		else:
-			print('[ERROR] NOTIFYPLEX: ERROR AUTO-DETECTING PLEX SECTIONS. CHECK CONNECTION DETAILS AND TRY AGAIN')
+			print('[ERROR] ERROR UPDATING SECTION {}. CHECK CONNECTION DETAILS AND TRY AGAIN'.format(section_key))
 			sys.exit(POSTPROCESS_ERROR)
-
-	if section_request.status_code == 200:
-		root = ET.fromstring(section_response)
-		for directory in root.findall('Directory'):
-			section_title = directory.get('title')
-			if section_title.lower() == plex_section_title.lower():
-				section_key = directory.get('key')
-				break
-		if section_key is None:
-			print('[ERROR] NOTIFYPLEX: PLEX SECTION NOT FOUND. PLEASE MAKE SURE YOUR SECTION MAPPING IS CORRECT AND TRY AGAIN')
-			sys.exit(POSTPROCESS_ERROR)
-		refresh_url = 'http://{}/library/sections/{}/refresh'.format(plex_ip, section_key)
-		try:
-			requests.get(refresh_url, params=params, timeout=10)
-		except requests.exceptions.RequestException or OSError:
-			requests.session().close()
-			if silent_mode:
-				print(
-					'[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION {}. SILENT FAILURE MODE ACTIVATED'.format(section_key))
-				sys.exit(POSTPROCESS_SUCCESS)
-			else:
-				print('[ERROR] NOTIFYPLEX: ERROR UPDATING SECTION {}. CHECK CONNECTION DETAILS AND TRY AGAIN'.format(section_key))
-				sys.exit(POSTPROCESS_ERROR)
-		print('[INFO] NOTIFYPLEX: TARGETED PLEX UPDATE FOR SECTION {} COMPLETE'.format(section_key))
-
-	elif section_request.status_code == 401:
-		if os.path.isfile(plex_auth_path):
-			os.remove(plex_auth_path)
-		if silent_mode:
-			print('[WARNING] NOTIFYPLEX: AUTHORIZATION ERROR. PLEASE RE-RUN SCRIPT TO GENERATE NEW TOKEN. SILENT '
-					'FAILURE MODE ACTIVATED')
-			sys.exit(POSTPROCESS_SUCCESS)
-		else:
-			print('[ERROR] NOTIFYPLEX: AUTHORIZATION ERROR. TOKEN MAY BE INVALID. PLEASE RE-RUN SCRIPT TO GENERATE NEW TOKEN')
-			sys.exit(POSTPROCESS_ERROR)
+	print('[INFO] TARGETED PLEX UPDATE FOR SECTION {} COMPLETE'.format(section_key))
 
 
-def refresh_auto(movie_cats, tv_cats, plex_ip):
+def refresh_auto(movie_cats, tv_cats):
 
 	movie_cats = movie_cats.replace(' ', '')
 	movie_cats_split = movie_cats.split(',')
 	tv_cats = tv_cats.replace(' ', '')
 	tv_cats_split = tv_cats.split(',')
 
-	params = {
-		'X-Plex-Token': get_auth_token()
-	}
-	section_url = 'http://{}/library/sections'.format(plex_ip)
-	try:
-		section_request = requests.get(section_url, params=params, timeout=10)
-		section_response = section_request.content
-	except requests.exceptions.RequestException or OSError:
-		requests.session().close()
-		if silent_mode:
-			print('[WARNING] NOTIFYPLEX: ERROR AUTO-DETECTING PLEX SECTIONS. SILENT FAILURE MODE ACTIVATED')
-			sys.exit(POSTPROCESS_SUCCESS)
-		else:
-			print('[ERROR] NOTIFYPLEX: ERROR AUTO-DETECTING PLEX SECTIONS. CHECK CONNECTION DETAILS AND TRY AGAIN')
-			sys.exit(POSTPROCESS_ERROR)
+	root = ET.fromstring(get_plex_sections())
+	movie_sections = []
+	tv_sections = []
 
-	if section_request.status_code == 200:
-		root = ET.fromstring(section_response)
-		movie_sections = []
-		tv_sections = []
+	for directory in root.findall('Directory'):
+		video_type = directory.get('type')
+		if video_type == 'show':
+			tv_sections.append(directory.get('key'))
+		elif video_type == 'movie':
+			movie_sections.append(directory.get('key'))
 
-		for directory in root.findall('Directory'):
-			video_type = directory.get('type')
-			if video_type == 'show':
-				tv_sections.append(directory.get('key'))
-			elif video_type == 'movie':
-				movie_sections.append(directory.get('key'))
+	for tv_cat in tv_cats_split:
+		if nzb_cat == tv_cat:
+			for tv_section in tv_sections:
+				refresh_url = 'http://{}/library/sections/{}/refresh'.format(plex_ip, tv_section)
+				try:
+					requests.get(refresh_url, params=params, timeout=10)
+				except requests.exceptions.RequestException or OSError:
+					requests.session().close()
+					if silent_mode:
+						print('[WARNING] ERROR UPDATING SECTION {}. SILENT FAILURE MODE ACTIVATED'.format(tv_section))
+						sys.exit(POSTPROCESS_SUCCESS)
+					else:
+						print('[ERROR] ERROR UPDATING SECTION {}. CHECK CONNECTION DETAILS AND TRY AGAIN'.format(tv_section))
+						sys.exit(POSTPROCESS_ERROR)
+				print('[INFO] TARGETED PLEX UPDATE FOR SECTION {} COMPLETE'.format(tv_section))
 
-		for tv_cat in tv_cats_split:
-			if nzb_cat == tv_cat:
-				for tv_section in tv_sections:
-					refresh_url = 'http://{}/library/sections/{}/refresh'.format(plex_ip, tv_section)
-					try:
-						requests.get(refresh_url, params=params, timeout=10)
-					except requests.exceptions.RequestException or OSError:
-						requests.session().close()
-						if silent_mode:
-							print('[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION {}. SILENT FAILURE MODE ACTIVATED'.format(tv_section))
-							sys.exit(POSTPROCESS_SUCCESS)
-						else:
-							print('[ERROR] NOTIFYPLEX: ERROR UPDATING SECTION {}. CHECK CONNECTION DETAILS AND TRY AGAIN'.format(tv_section))
-							sys.exit(POSTPROCESS_ERROR)
-					print('[INFO] NOTIFYPLEX: TARGETED PLEX UPDATE FOR SECTION {} COMPLETE'.format(tv_section))
-
-		for movie_cat in movie_cats_split:
-			if nzb_cat == movie_cat:
-				for movie_section in movie_sections:
-					refresh_url = 'http://{}/library/sections/{}/refresh'.format(plex_ip, movie_section)
-					try:
-						requests.get(refresh_url, params=params, timeout=10)
-					except requests.exceptions.RequestException or OSError:
-						requests.session().close()
-						if silent_mode:
-							print('[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION {}. SILENT FAILURE MODE ACTIVATED'.format(movie_section))
-							sys.exit(POSTPROCESS_SUCCESS)
-						else:
-							print('[ERROR] NOTIFYPLEX: ERROR UPDATING SECTION {}. CHECK CONNECTION DETAILS AND TRY AGAIN'.format(movie_section))
-							sys.exit(POSTPROCESS_ERROR)
-					print('[INFO] NOTIFYPLEX: TARGETED PLEX UPDATE FOR SECTION {} COMPLETE'.format(movie_section))
-
-	elif section_request.status_code == 401:
-		if os.path.isfile(plex_auth_path):
-			os.remove(plex_auth_path)
-		if silent_mode:
-			print('[WARNING] NOTIFYPLEX: AUTHORIZATION ERROR. PLEASE RE-RUN SCRIPT TO GENERATE NEW TOKEN. SILENT FAILURE MODE ACTIVATED')
-			sys.exit(POSTPROCESS_SUCCESS)
-		else:
-			print('[ERROR] NOTIFYPLEX: AUTHORIZATION ERROR. TOKEN MAY BE INVALID. PLEASE RE-RUN SCRIPT TO GENERATE NEW TOKEN')
-			sys.exit(POSTPROCESS_ERROR)
+	for movie_cat in movie_cats_split:
+		if nzb_cat == movie_cat:
+			for movie_section in movie_sections:
+				refresh_url = 'http://{}/library/sections/{}/refresh'.format(plex_ip, movie_section)
+				try:
+					requests.get(refresh_url, params=params, timeout=10)
+				except requests.exceptions.RequestException or OSError:
+					requests.session().close()
+					if silent_mode:
+						print('[WARNING] ERROR UPDATING SECTION {}. SILENT FAILURE MODE ACTIVATED'.format(movie_section))
+						sys.exit(POSTPROCESS_SUCCESS)
+					else:
+						print('[ERROR] ERROR UPDATING SECTION {}. CHECK CONNECTION DETAILS AND TRY AGAIN'.format(movie_section))
+						sys.exit(POSTPROCESS_ERROR)
+				print('[INFO] TARGETED PLEX UPDATE FOR SECTION {} COMPLETE'.format(movie_section))
 
 
-def refresh_custom_sections(raw_plex_sections, plex_ip):
+def refresh_custom_sections(raw_plex_sections):
 
 	plex_sections = raw_plex_sections.replace(' ', '')
 	plex_sections_split = plex_sections.split(',')
-
-	params = {
-		'X-Plex-Token': get_auth_token()
-	}
 
 	for plex_section in plex_sections_split:
 		refresh_url = 'http://%s/library/sections/%s/refresh' % (plex_ip, plex_section)
@@ -388,12 +392,12 @@ def refresh_custom_sections(raw_plex_sections, plex_ip):
 		except requests.exceptions.RequestException or OSError:
 			requests.session().close()
 			if silent_mode:
-				print('[WARNING] NOTIFYPLEX: ERROR UPDATING SECTION %s. SILENT FAILURE MODE ACTIVATED' % plex_section)
+				print('[WARNING] ERROR UPDATING SECTION %s. SILENT FAILURE MODE ACTIVATED' % plex_section)
 				sys.exit(POSTPROCESS_SUCCESS)
 			else:
-				print('[ERROR] NOTIFYPLEX: ERROR OPENING URL. CHECK NETWORK CONNECTION, PLEX SERVER IP:PORT, AND SECTION NUMBERS')
+				print('[ERROR] ERROR OPENING URL. CHECK NETWORK CONNECTION, PLEX SERVER IP:PORT, AND SECTION NUMBERS')
 				sys.exit(POSTPROCESS_ERROR)
-		print('[INFO] NOTIFYPLEX: TARGETED PLEX UPDATE FOR SECTION %s COMPLETE' % plex_section)
+		print('[INFO] TARGETED PLEX UPDATE FOR SECTION %s COMPLETE' % plex_section)
 
 
 def show_gui_notification(raw_pht_ips):
@@ -422,7 +426,7 @@ def show_gui_notification(raw_pht_ips):
 			print('[INFO] NOTIFYPLEX: GUI NOTIFICATION TO PHT INSTANCE SUCCESSFUL')
 		except requests.exceptions.RequestException or OSError:
 			requests.session().close()
-			print('[WARNING] NOTIFYPLEX: PHT GUI NOTIFICATION FAILED')
+			print('[WARNING] PHT GUI NOTIFICATION FAILED')
 
 
 if 'NZBPP_STATUS' not in os.environ:
@@ -434,7 +438,7 @@ required_options = ('NZBPO_PLEXIP', 'NZBPO_SILENTFAILURE', 'NZBPO_REFRESHMODE', 
 
 for optname in required_options:
 	if optname not in os.environ:
-		print('[ERROR] NOTIFYPLEX: OPTION {} IS MISSING IN CONFIGURATION FILE. PLEASE CHECK SCRIPT SETTINGS'.format(optname[6:]))
+		print('[ERROR] OPTION {} IS MISSING IN CONFIGURATION FILE. PLEASE CHECK SCRIPT SETTINGS'.format(optname[6:]))
 		sys.exit(POSTPROCESS_ERROR)
 
 # Check to see if download was successful
@@ -453,17 +457,17 @@ if pp_status:
 		tv_cats = os.environ['NZBPO_TVCAT']
 
 		if refresh_mode == 'Custom':
-			refresh_custom_sections(raw_plex_section, plex_ip)
+			refresh_custom_sections(raw_plex_section)
 		elif refresh_mode == 'Auto':
-			refresh_auto(movie_cats, tv_cats, plex_ip)
+			refresh_auto(movie_cats, tv_cats)
 		elif refresh_mode == 'Advanced':
-			refresh_advanced(section_mapping, plex_ip)
+			refresh_advanced(section_mapping)
 		else:
-			refresh_custom_sections(raw_plex_section, plex_ip)
-			refresh_auto(movie_cats, tv_cats, plex_ip)
+			refresh_custom_sections(raw_plex_section)
+			refresh_auto(movie_cats, tv_cats)
 
 	sys.exit(POSTPROCESS_SUCCESS)
 
 else:
-	print('[ERROR] NOTIFYPLEX: SKIPPING PLEX UPDATE BECAUSE DOWNLOAD FAILED.')
+	print('[ERROR] SKIPPING PLEX UPDATE BECAUSE DOWNLOAD FAILED.')
 	sys.exit(POSTPROCESS_NONE)
