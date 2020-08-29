@@ -145,6 +145,7 @@ def get_auth_token():
 				print('[INFO] plex.tv AUTHENTICATION SUCCESSFUL. STORING AUTH TOKEN TO DISK')
 				try:
 					with open(plex_auth_path, 'wb') as f:
+						print('[DEBUG] STORING AUTH TOKEN TO: {}'.format(plex_auth_path))
 						pickle.dump(plex_dict, f)
 				except PermissionError:
 					print('[WARNING] CANNOT WRITE TO DISK. PLEASE SET PROPER PERMISSIONS ON YOUR NOTIFYPLEX '
@@ -216,6 +217,7 @@ def refresh_advanced(mapping):
 			plex_section_title = section_map.split(':')[1]
 			break
 	if category is None or plex_section_title is None:
+		print('[DEBUG] NZBGET CATEGORY FOR THIS DOWNLOAD IS: {}'.format(nzb_cat))
 		print('[ERROR] ERROR DETECTING NZBGET CATEGORY OR PLEX SECTION TITLE. PLEASE MAKE SURE YOUR SECTION '
 				'MAPPING IS CORRECT AND TRY AGAIN')
 		sys.exit(POSTPROCESS_ERROR)
@@ -227,6 +229,7 @@ def refresh_advanced(mapping):
 			section_key = directory.get('key')
 			break
 	if section_key is None:
+		print('[DEBUG] PLEX SECTION "{}" NOT FOUND ON YOUR SERVER'.format(plex_section_title))
 		print('[ERROR] PLEX SECTION NOT FOUND. PLEASE MAKE SURE YOUR SECTION MAPPING IS CORRECT AND TRY AGAIN')
 		sys.exit(POSTPROCESS_ERROR)
 
@@ -242,6 +245,7 @@ def refresh_advanced(mapping):
 		else:
 			print('[ERROR] ERROR UPDATING SECTION {}. CHECK CONNECTION DETAILS AND TRY AGAIN'.format(section_key))
 			sys.exit(POSTPROCESS_ERROR)
+	print('[DEBUG] REFRESHING PLEX SECTION "{}" MAPPED TO "{}" CATEGORY'.format(plex_section_title, category))
 	print('[INFO] TARGETED PLEX UPDATE FOR SECTION {} COMPLETE'.format(section_key))
 
 
@@ -277,7 +281,9 @@ def refresh_auto(movie_cats, tv_cats):
 					else:
 						print('[ERROR] ERROR UPDATING SECTION {}. CHECK CONNECTION DETAILS AND TRY AGAIN'.format(tv_section))
 						sys.exit(POSTPROCESS_ERROR)
+				print('[DEBUG] AUTO-DETECTED "{}" CATEGORY. REFRESHING ALL "show" LIBRARIES ON YOUR SERVER'.format(tv_cat))
 				print('[INFO] TARGETED PLEX UPDATE FOR SECTION {} COMPLETE'.format(tv_section))
+			break
 
 	for movie_cat in movie_cats_split:
 		if nzb_cat == movie_cat:
@@ -293,7 +299,10 @@ def refresh_auto(movie_cats, tv_cats):
 					else:
 						print('[ERROR] ERROR UPDATING SECTION {}. CHECK CONNECTION DETAILS AND TRY AGAIN'.format(movie_section))
 						sys.exit(POSTPROCESS_ERROR)
+				print('[DEBUG] AUTO-DETECTED "{}" CATEGORY. REFRESHING ALL "movie" LIBRARIES ON YOUR SERVER'.format(
+					movie_cat))
 				print('[INFO] TARGETED PLEX UPDATE FOR SECTION {} COMPLETE'.format(movie_section))
+			break
 
 
 def refresh_custom_sections(raw_plex_sections):
