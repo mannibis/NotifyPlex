@@ -46,7 +46,7 @@ auth token.
     * **Both:** This mode will use both the Auto and Custom modes
     
     * **Advanced:** This mode is for advanced users and will refresh Plex sections according to 
-    a custom category:section_title mapping specified in the 'sectionMapping' option. Only one plex section
+    a custom category:section_title mapping specified in the 'sectionMapping' option. Only one Plex section
     will be refreshed depending on the NZBGet category. *Example:* `movies:Movies,uhd:Movies 4K,tv:TV Shows`
     will only refresh the "Movies" library if the NZBGet category detected was "movies", and so on.  The Plex 
     library names should match exactly as shown in your Plex server. Use 'Get Plex Sections' command button 
@@ -56,7 +56,7 @@ auth token.
 
 * Optionally test PMS connection and plex.tv authorization by pressing 'Test PMS Connection' button on settings page
 
-* To grab list of your Plex library names and section numbers, use 'Get Sections List' command button on settings page
+* To grab list of your Plex library names and section numbers, use 'Get Plex Sections' command button on settings page
 
 **NOTE:** Plex Username and Password are only required to fetch auth token, which will be stored inside your NotifyPlex 
 folder and subsequently re-used
