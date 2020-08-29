@@ -202,90 +202,6 @@ def get_plex_sections():
 			sys.exit(POSTPROCESS_ERROR)
 
 
-command = os.environ.get('NZBCP_COMMAND')
-test_mode = command == 'ConnectionTest'
-list_sections_mode = command == 'SectionList'
-
-if (command is not None) and (not test_mode) and (not list_sections_mode):
-	print('[ERROR] INVALID COMMAND ' + command)
-	sys.exit(POSTPROCESS_ERROR)
-if list_sections_mode:
-	sections_title_list = []
-	sections_number_list = []
-	sections_type_list = []
-	section_count = 0
-	required_test_option = ('NZBPO_PLEXIP')
-
-	if required_test_option not in os.environ:
-		print('[ERROR] OPTION {} IS MISSING IN CONFIGURATION FILE. PLEASE CHECK SCRIPT SETTINGS'.format(optname[6:]))
-		sys.exit(POSTPROCESS_ERROR)
-
-	plex_test_ip = os.environ['NZBPO_PLEXIP']
-
-	print('[INFO] GRABBING LIST OF PLEX LIBRARIES AND SECTION NUMBERS')
-
-	root = ET.fromstring(get_plex_sections())
-	for directory in root.findall('Directory'):
-		sections_title_list.append(directory.get('title'))
-		sections_number_list.append(directory.get('key'))
-		sections_type_list.append(directory.get('type'))
-		section_count += 1
-	print('[INFO] YOU HAVE A TOTAL OF {} SECTIONS'.format(section_count))
-	for i in range(len(sections_title_list)):
-		print('[INFO] SECTION {}: {}, type={}'.format(sections_number_list[i], sections_title_list[i], sections_type_list[i]))
-	sys.exit(POSTPROCESS_SUCCESS)
-
-if test_mode:
-	required_test_options = ('NZBPO_PLEXUSER', 'NZBPO_PLEXPASS', 'NZBPO_PLEXIP')
-	for optname in required_test_options:
-		if optname not in os.environ:
-			print('[ERROR] OPTION {} IS MISSING IN CONFIGURATION FILE. PLEASE CHECK SCRIPT SETTINGS'.format(optname[6:]))
-			sys.exit(POSTPROCESS_ERROR)
-	plex_test_ip = os.environ['NZBPO_PLEXIP']
-
-	print('[INFO] TESTING PMS CONNECTION AND AUTHORIZATION')
-
-	test_params = {
-		'X-Plex-Token': get_auth_token()
-	}
-	test_url = 'http://{}/library/sections'.format(plex_test_ip)
-	try:
-		test_request = requests.get(test_url, params=test_params, timeout=10)
-	except requests.exceptions.RequestException or OSError:
-		requests.session().close()
-		print('[ERROR] ERROR CONNECTING TO PMS. CHECK CONNECTION DETAILS AND RETRY TEST')
-		sys.exit(POSTPROCESS_ERROR)
-	if test_request.status_code == 200:
-		print('[INFO] CONNECTION TEST SUCCESSFUL!')
-		sys.exit(POSTPROCESS_SUCCESS)
-	else:
-		print('[ERROR] AUTHORIZATION ERROR. CHECK CONNECTION DETAILS AND RETRY TEST')
-		sys.exit(POSTPROCESS_ERROR)
-
-
-dnzboptions = ('NZBPR__DNZB_PROPERNAME', 'NZBPR__DNZB_EPISODENAME', 'NZBPR__DNZB_MOVIEYEAR')
-if dnzboptions[0] in os.environ:
-	proper_name = os.environ[dnzboptions[0]]
-else:
-	proper_name = ''
-if dnzboptions[1] in os.environ:
-	proper_ep = os.environ[dnzboptions[1]]
-else:
-	proper_ep = ''
-if dnzboptions[2] in os.environ:
-	proper_year = os.environ[dnzboptions[2]]
-else:
-	proper_year = ''
-
-nzb_name = os.environ['NZBPP_NZBNAME']
-nzb_cat = os.environ['NZBPP_CATEGORY']
-gui_show = os.environ['NZBPO_GUISHOW'] == 'yes'
-refresh_library = os.environ['NZBPO_REFRESHLIBRARY'] == 'yes'
-refresh_mode = os.environ['NZBPO_REFRESHMODE']
-silent_mode = os.environ['NZBPO_SILENTFAILURE'] == 'yes'
-section_mapping = os.environ['NZBPO_SECTIONMAPPING']
-
-
 def refresh_advanced(mapping):
 
 	category = None
@@ -429,6 +345,87 @@ def show_gui_notification(raw_pht_ips):
 			print('[WARNING] PHT GUI NOTIFICATION FAILED')
 
 
+command = os.environ.get('NZBCP_COMMAND')
+test_mode = command == 'ConnectionTest'
+list_sections_mode = command == 'SectionList'
+
+if (command is not None) and (not test_mode) and (not list_sections_mode):
+	print('[ERROR] INVALID COMMAND ' + command)
+	sys.exit(POSTPROCESS_ERROR)
+if list_sections_mode:
+	sections_title_list = []
+	sections_number_list = []
+	sections_type_list = []
+	section_count = 0
+	required_test_option = 'NZBPO_PLEXIP'
+
+	if required_test_option not in os.environ:
+		print('[ERROR] OPTION {} IS MISSING IN CONFIGURATION FILE. PLEASE CHECK SCRIPT SETTINGS'.format(optname[6:]))
+		sys.exit(POSTPROCESS_ERROR)
+
+	print('[INFO] GRABBING LIST OF PLEX LIBRARIES AND SECTION NUMBERS')
+
+	root = ET.fromstring(get_plex_sections())
+	for directory in root.findall('Directory'):
+		sections_title_list.append(directory.get('title'))
+		sections_number_list.append(directory.get('key'))
+		sections_type_list.append(directory.get('type'))
+		section_count += 1
+	print('[INFO] YOU HAVE A TOTAL OF {} SECTIONS'.format(section_count))
+	for i in range(len(sections_title_list)):
+		print('[INFO] SECTION {}: {}, type={}'.format(sections_number_list[i], sections_title_list[i], sections_type_list[i]))
+	sys.exit(POSTPROCESS_SUCCESS)
+
+if test_mode:
+	required_test_options = ('NZBPO_PLEXUSER', 'NZBPO_PLEXPASS', 'NZBPO_PLEXIP')
+	for optname in required_test_options:
+		if optname not in os.environ:
+			print('[ERROR] OPTION {} IS MISSING IN CONFIGURATION FILE. PLEASE CHECK SCRIPT SETTINGS'.format(optname[6:]))
+			sys.exit(POSTPROCESS_ERROR)
+	plex_test_ip = os.environ['NZBPO_PLEXIP']
+
+	print('[INFO] TESTING PMS CONNECTION AND AUTHORIZATION')
+
+	test_params = {
+		'X-Plex-Token': get_auth_token()
+	}
+	test_url = 'http://{}/library/sections'.format(plex_test_ip)
+	try:
+		test_request = requests.get(test_url, params=test_params, timeout=10)
+	except requests.exceptions.RequestException or OSError:
+		requests.session().close()
+		print('[ERROR] ERROR CONNECTING TO PMS. CHECK CONNECTION DETAILS AND RETRY TEST')
+		sys.exit(POSTPROCESS_ERROR)
+	if test_request.status_code == 200:
+		print('[INFO] CONNECTION TEST SUCCESSFUL!')
+		sys.exit(POSTPROCESS_SUCCESS)
+	else:
+		print('[ERROR] AUTHORIZATION ERROR. CHECK CONNECTION DETAILS AND RETRY TEST')
+		sys.exit(POSTPROCESS_ERROR)
+
+
+dnzboptions = ('NZBPR__DNZB_PROPERNAME', 'NZBPR__DNZB_EPISODENAME', 'NZBPR__DNZB_MOVIEYEAR')
+if dnzboptions[0] in os.environ:
+	proper_name = os.environ[dnzboptions[0]]
+else:
+	proper_name = ''
+if dnzboptions[1] in os.environ:
+	proper_ep = os.environ[dnzboptions[1]]
+else:
+	proper_ep = ''
+if dnzboptions[2] in os.environ:
+	proper_year = os.environ[dnzboptions[2]]
+else:
+	proper_year = ''
+
+nzb_name = os.environ['NZBPP_NZBNAME']
+nzb_cat = os.environ['NZBPP_CATEGORY']
+gui_show = os.environ['NZBPO_GUISHOW'] == 'yes'
+refresh_library = os.environ['NZBPO_REFRESHLIBRARY'] == 'yes'
+refresh_mode = os.environ['NZBPO_REFRESHMODE']
+silent_mode = os.environ['NZBPO_SILENTFAILURE'] == 'yes'
+section_mapping = os.environ['NZBPO_SECTIONMAPPING']
+
 if 'NZBPP_STATUS' not in os.environ:
 	print('*** NZBGet post-processing script ***')
 	print('This script is supposed to be called from NZBGet v13.0 or later.')
@@ -451,7 +448,6 @@ if pp_status:
 		show_gui_notification(pht_urls)
 
 	if refresh_library:
-		plex_ip = os.environ['NZBPO_PLEXIP']
 		raw_plex_section = os.environ['NZBPO_CUSTOMPLEXSECTION']
 		movie_cats = os.environ['NZBPO_MOVIESCAT']
 		tv_cats = os.environ['NZBPO_TVCAT']
