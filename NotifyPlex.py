@@ -123,7 +123,7 @@ def get_auth_token():
 		print('[INFO] USING STORED PLEX AUTH TOKEN. BYPASSING plex.tv')
 		return plex_dict.get('auth_token')
 
-	auth_url = 'https://my.plexapp.com/users/sign_in.xml'
+	auth_url = 'https://plex.tv/users/sign_in.xml'
 	auth_params = {'user[login]': plex_username, 'user[password]': plex_password}
 	headers = {
 			'X-Plex-Platform': 'NZBGet',
