@@ -37,6 +37,9 @@
 # Directory to store the auth token.
 #plexAuthDir=
 
+# To clear the stored auth token, delete the file.
+#DeleteCacheFile@Delete the Stored Auth Token
+
 ## Plex Media Server
 
 # Plex Media Server Settings.
@@ -115,14 +118,18 @@
 ##############################################################################
 """  # noqa: E501
 
-import contextlib
+from __future__ import annotations
+
 import http
 import logging
 import os
 import pickle
+import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Any, cast
+from urllib.parse import urljoin
 
 import requests
 
@@ -131,6 +138,11 @@ logger = logging.getLogger(__name__)
 POSTPROCESS_SUCCESS = 93
 POSTPROCESS_ERROR = 94
 POSTPROCESS_NONE = 95
+
+DEFAULT_PLEX_TV_TIMEOUT = 30
+DEFAULT_PLEX_TIMEOUT = 10
+
+NUMBER_RE = re.compile(r"\d+")
 
 nzb_name = os.getenv("NZBPP_NZBNAME", "")
 gui_show = os.getenv("NZBPO_GUISHOW", "no") == "yes"
@@ -154,15 +166,50 @@ proper_ep = os.getenv("NZBPR__DNZB_EPISODENAME", "")
 proper_year = os.getenv("NZBPR__DNZB_MOVIEYEAR", "")
 
 
-def get_auth_token(test_mode: bool) -> str:
-    if plex_auth_path.is_file() and not test_mode:
-        with plex_auth_path.open("rb") as f:
-            plex_dict = pickle.load(f)  # noqa: S301
-            with contextlib.suppress(KeyError):
-                auth_token = plex_dict["auth_token"]
-                logger.info("USING STORED PLEX AUTH TOKEN. BYPASSING plex.tv")
-                return auth_token
+class _Session(requests.Session):
+    def __init__(self, base_url: str) -> None:
+        super().__init__()
+        self.base_url = base_url
 
+    def request(self, method: str | bytes, url: str | bytes, *args: Any, **kwargs: Any) -> requests.Response:  # noqa: ANN401
+        return super().request(method, urljoin(self.base_url, cast(str, url)), *args, **kwargs)
+
+
+def _get_direct_url_from_plex_tv(session: requests.Session, auth_token: str) -> str | None:
+    url = "https://plex.tv/pms/resources?includeHttps=1"
+    session.headers = {
+        "X-Plex-Token": auth_token,
+    }
+
+    response = session.get(url, timeout=DEFAULT_PLEX_TV_TIMEOUT)
+    if not response.ok:
+        logger.error("ERROR CONNECTING TO plex.tv SERVERS. CHECK CONNECTION DETAILS AND TRY AGAIN")
+        return None
+
+    servers = ET.fromstring(response.text)  # noqa: S314
+    plex_hostname = plex_ip.split(":")[0].casefold()  # looking for the specific hostname that matches the plexIP.
+
+    for server in servers:
+        for connection in server:
+            address = connection.get("address")
+            if address is None:
+                continue
+
+            if address.casefold() != plex_hostname:
+                continue
+
+            uri = connection.get("uri")
+            if uri is None or "plex.direct" not in uri:
+                continue
+
+            r = session.options(urljoin(uri, "identity"), timeout=DEFAULT_PLEX_TIMEOUT)
+            if r.status_code == http.HTTPStatus.OK:
+                return uri
+
+    return None
+
+
+def _get_auth_token_from_plex_tv(session: requests.Session, test_mode: bool) -> str:
     auth_url = "https://plex.tv/users/sign_in.xml"
     auth_params = {"user[login]": plex_username, "user[password]": plex_password}
     headers = {
@@ -170,33 +217,18 @@ def get_auth_token(test_mode: bool) -> str:
         "X-Plex-Platform-Version": "21.0",
         "X-Plex-Provides": "controller",
         "X-Plex-Product": "NotifyPlex",
-        "X-Plex-Version": "3.3",
+        "X-Plex-Version": "3.4",
         "X-Plex-Device": "NZBGet",
         "X-Plex-Client-Identifier": "12286",
     }
     try:
-        auth_request = requests.post(auth_url, headers=headers, data=auth_params, timeout=30, verify=True)
-        auth_response = auth_request.content
-        root = ET.fromstring(auth_response)  # noqa: S314
+        response = session.post(
+            auth_url, headers=headers, data=auth_params, timeout=DEFAULT_PLEX_TV_TIMEOUT, verify=True
+        )
+        response.raise_for_status()
+        root = ET.fromstring(response.text)  # noqa: S314
         try:
             plex_auth_token = root.attrib["authToken"]
-            plex_dict = {"auth_token": plex_auth_token}
-            if not test_mode:
-                logger.info("plex.tv AUTHENTICATION SUCCESSFUL. STORING AUTH TOKEN TO %s", str(plex_auth_path))
-                try:
-                    plex_auth_path.parent.mkdir(parents=True, exist_ok=True)
-                    with plex_auth_path.open("wb") as f:
-                        logger.debug("STORING AUTH TOKEN TO: %s", str(plex_auth_path))
-                        pickle.dump(plex_dict, f)
-                except PermissionError:
-                    logger.warning(
-                        (
-                            "CANNOT WRITE TO %s. PLEASE SET PROPER PERMISSIONS ON YOUR NOTIFYPLEX "
-                            "FOLDER IF YOU WANT TO STORE AUTH TOKEN"
-                        ),
-                        str(plex_auth_path),
-                        exc_info=True,
-                    )
         except KeyError:
             if test_mode:
                 logger.exception("ERROR AUTHENTICATING WITH plex.tv SERVERS. CHECK USERNAME/PASSWORD AND RETRY TEST")
@@ -218,15 +250,84 @@ def get_auth_token(test_mode: bool) -> str:
             sys.exit(POSTPROCESS_ERROR)
 
 
+def _read_from_cache_file() -> tuple[str | None, str | None]:
+    if not plex_auth_path.is_file():
+        return None, None
+
+    try:
+        with plex_auth_path.open("rb") as f:
+            plex_dict = pickle.load(f)  # noqa: S301
+            if "auth_token" not in plex_dict or "direct_url" not in plex_dict:
+                return None, None
+
+        logger.info("USING STORED PLEX AUTH TOKEN. BYPASSING plex.tv")
+        return plex_dict["auth_token"], plex_dict["direct_url"]
+    except (pickle.UnpicklingError, EOFError, OSError):
+        logger.exception("ERROR READING %s", str(plex_auth_path))
+        return None, None
+
+
+def _write_cache_file(auth_token: str, direct_url: str | None) -> None:
+    plex_dict = {"auth_token": auth_token, "direct_url": direct_url}
+    try:
+        plex_auth_path.parent.mkdir(parents=True, exist_ok=True)
+        with plex_auth_path.open("wb") as f:
+            logger.debug("STORING AUTH TOKEN TO: %s", str(plex_auth_path))
+            pickle.dump(plex_dict, f)
+    except PermissionError:
+        logger.warning(
+            ("CANNOT WRITE TO %s. PLEASE SET PROPER PERMISSIONS ON %s FOLDER IF YOU WANT TO STORE AUTH TOKEN"),
+            str(plex_auth_path),
+            str(plex_auth_path.parent),
+            exc_info=True,
+        )
+
+
+def _delete_cache_file() -> None:
+    if not plex_auth_path.is_file():
+        return
+
+    logger.info("REMOVING %s", str(plex_auth_path))
+    try:
+        plex_auth_path.unlink(missing_ok=True)
+    except PermissionError:
+        logger.warning(
+            ("CANNOT DELETE %s. PLEASE SET PROPER PERMISSIONS ON %s FOLDER IF YOU WANT TO STORE AUTH TOKEN"),
+            str(plex_auth_path),
+            str(plex_auth_path.parent),
+            exc_info=True,
+        )
+
+
+def get_auth_token(test_mode: bool) -> tuple[str, str | None]:
+    auth_token = None
+    if not test_mode:
+        auth_token, direct_url = _read_from_cache_file()
+        if auth_token is not None:
+            return auth_token, direct_url
+
+    with requests.Session() as session:
+        auth_token = _get_auth_token_from_plex_tv(session, test_mode)
+        direct_url = _get_direct_url_from_plex_tv(session, auth_token)
+
+    if not test_mode:
+        _write_cache_file(auth_token, direct_url)
+
+    return auth_token, direct_url
+
+
 def create_plex_session(test_mode: bool) -> requests.Session:
-    auth_token = get_auth_token(test_mode)
-    session = requests.Session()
-    session.verify = False
+    auth_token, base_url = get_auth_token(test_mode)
+    if base_url is None:
+        base_url = f"{get_http_scheme(plex_secure)}://{plex_ip}"
+        session = _Session(base_url=base_url)
+    else:
+        session = _Session(base_url=base_url)
     session.params = {"X-Plex-Token": auth_token}
     return session
 
 
-def get_plex_sections(session: requests.Session) -> list[tuple[str, str, str]]:
+def get_plex_sections(session: requests.Session) -> list[tuple[int, str, str]]:
     """
     Gets the plex sections.
 
@@ -236,9 +337,9 @@ def get_plex_sections(session: requests.Session) -> list[tuple[str, str, str]]:
     Returns:
         list of tuples containing key, type, title.
     """
-    section_url = f"{get_http_scheme(plex_secure)}://{plex_ip}/library/sections"
     try:
-        response = session.get(section_url, timeout=10)
+        response = session.get("/library/sections", timeout=DEFAULT_PLEX_TIMEOUT)
+        response.raise_for_status()
     except (requests.exceptions.RequestException, OSError):
         if silent_mode:
             logger.warning("ERROR AUTO-DETECTING PLEX SECTIONS. SILENT FAILURE MODE ACTIVATED")
@@ -249,8 +350,8 @@ def get_plex_sections(session: requests.Session) -> list[tuple[str, str, str]]:
 
     if response.status_code == http.HTTPStatus.OK:
         root = ET.fromstring(response.text)  # noqa: S314
-        sections: list[tuple[str, str, str]] = [
-            (directory.get("key", ""), directory.get("type", ""), directory.get("title", ""))
+        sections: list[tuple[int, str, str]] = [
+            (int(directory.get("key", "")), directory.get("type", ""), directory.get("title", ""))
             for directory in root.findall("Directory")
         ]
 
@@ -258,11 +359,7 @@ def get_plex_sections(session: requests.Session) -> list[tuple[str, str, str]]:
         return sections
 
     if response.status_code == http.HTTPStatus.UNAUTHORIZED:
-        try:
-            if plex_auth_path.is_file():
-                plex_auth_path.unlink()
-        except PermissionError:
-            pass
+        _delete_cache_file()
         if silent_mode:
             logger.warning(
                 "AUTHORIZATION ERROR. PLEASE RE-RUN SCRIPT TO GENERATE NEW TOKEN. SILENT FAILURE MODE ACTIVATED"
@@ -276,19 +373,31 @@ def get_plex_sections(session: requests.Session) -> list[tuple[str, str, str]]:
     sys.exit(POSTPROCESS_ERROR)
 
 
+def refresh_section(session: requests.Session, key: int, title: str) -> bool:
+    refresh_url = f"/library/sections/{key}/refresh"
+    try:
+        response = session.get(refresh_url, timeout=DEFAULT_PLEX_TIMEOUT)
+        response.raise_for_status()
+        logger.info("TARGETED PLEX UPDATE FOR SECTION %s: %s COMPLETE", key, title)
+    except (requests.exceptions.RequestException, OSError):
+        if not silent_mode:
+            logger.exception("ERROR UPDATING SECTION %s: %s. CHECK CONNECTION DETAILS AND TRY AGAIN", key, title)
+            return False
+
+        logger.warning("ERROR UPDATING SECTION %s: %s. SILENT FAILURE MODE ACTIVATED", key, title)
+
+    return True
+
+
 def refresh_advanced(session: requests.Session, mapping: str, nzb_cat: str) -> None:
-    category = None
-    plex_section_title = None
-    section_key = None
+    plex_section_titles: dict[str, str] = {}
     section_map_list = mapping.split(",")
     for cur_section_map in section_map_list:
-        section_map = cur_section_map.strip(" ")
-        map_category = section_map.split(":")[0]
-        if nzb_cat.casefold() == map_category.casefold():
-            category = map_category
-            plex_section_title = section_map.split(":")[1]
-            break
-    if category is None or plex_section_title is None:
+        map_category, plex_section_title = cur_section_map.split(":")
+        if nzb_cat.casefold() == map_category.strip(" ").casefold():
+            plex_section_titles[plex_section_title.strip(" ").casefold()] = plex_section_title
+
+    if not plex_section_titles:
         logger.debug("NZBGET CATEGORY FOR THIS DOWNLOAD IS: %s", nzb_cat)
         logger.error(
             "ERROR DETECTING NZBGET CATEGORY OR PLEX SECTION TITLE. PLEASE MAKE SURE YOUR SECTION "
@@ -297,42 +406,29 @@ def refresh_advanced(session: requests.Session, mapping: str, nzb_cat: str) -> N
         sys.exit(POSTPROCESS_ERROR)
 
     sections = get_plex_sections(session)
-    section_keys = [key for key, _type, title in sections if title.casefold() == plex_section_title.casefold()]
-    if not section_keys:
-        logger.debug('PLEX SECTION "%s" NOT FOUND ON YOUR SERVER', plex_section_title)
-        logger.error("PLEX SECTION NOT FOUND. PLEASE MAKE SURE YOUR SECTION MAPPING IS CORRECT AND TRY AGAIN")
+    section_keys: list[tuple[int, str]] = []
+
+    for key, _type, title in sections:
+        title_key = title.strip(" ").casefold()
+        if title_key in plex_section_titles:
+            section_keys.append((key, title))
+            plex_section_titles.pop(title_key)
+
+    logger.debug("REFRESHING SECTIONS: %s LIBRARIES ON YOUR SERVER", sorted([key for key, title in section_keys]))
+
+    all_refreshed = True
+    for key, title in section_keys:
+        all_refreshed = refresh_section(session, key, title) and all_refreshed
+
+    if plex_section_titles:
+        logger.error(
+            'PLEX SECTIONS: %s NOT FOUND. PLEASE MAKE SURE YOUR SECTION MAPPING IS CORRECT AND TRY AGAIN"',
+            sorted(plex_section_titles.values()),
+        )
         sys.exit(POSTPROCESS_ERROR)
 
-    section_key = section_keys[0]
-    refresh_url = f"{get_http_scheme(plex_secure)}://{plex_ip}/library/sections/{section_key}/refresh"
-    try:
-        r = session.get(refresh_url, timeout=10)
-        r.raise_for_status()
-    except (requests.exceptions.RequestException, OSError):
-        if silent_mode:
-            logger.warning("ERROR UPDATING SECTION %s. SILENT FAILURE MODE ACTIVATED", section_key)
-            sys.exit(POSTPROCESS_SUCCESS)
-        else:
-            logger.exception("ERROR UPDATING SECTION %s. CHECK CONNECTION DETAILS AND TRY AGAIN", section_key)
-            sys.exit(POSTPROCESS_ERROR)
-    logger.debug('REFRESHING PLEX SECTION "%s" MAPPED TO "%s" CATEGORY', plex_section_title, category)
-    logger.info("TARGETED PLEX UPDATE FOR SECTION %s COMPLETE", section_key)
-
-
-def refresh_section(session: requests.Session, nzb_cat: str, category: str, key: str, title: str) -> None:
-    refresh_url = f"{get_http_scheme(plex_secure)}://{plex_ip}/library/sections/{key}/refresh"
-    try:
-        r = session.get(refresh_url, timeout=10)
-        r.raise_for_status()
-    except (requests.exceptions.RequestException, OSError):
-        if silent_mode:
-            logger.warning("ERROR UPDATING SECTION %s: %s. SILENT FAILURE MODE ACTIVATED", key, title)
-            sys.exit(POSTPROCESS_SUCCESS)
-        else:
-            logger.exception("ERROR UPDATING SECTION %s: %s. CHECK CONNECTION DETAILS AND TRY AGAIN", key, title)
-            sys.exit(POSTPROCESS_ERROR)
-    logger.debug('AUTO-DETECTED "%s" CATEGORY. REFRESHING ALL "%s" LIBRARIES ON YOUR SERVER', nzb_cat, category)
-    logger.info("TARGETED PLEX UPDATE FOR SECTION %s: %s COMPLETE", key, title)
+    if not all_refreshed:
+        sys.exit(POSTPROCESS_ERROR)
 
 
 def refresh_auto(session: requests.Session, movie_cats: str, tv_cats: str, nzb_cat: str) -> None:
@@ -343,10 +439,10 @@ def refresh_auto(session: requests.Session, movie_cats: str, tv_cats: str, nzb_c
     nzb_cat = nzb_cat.casefold()
 
     sections = get_plex_sections(session)
-    movie_sections = []
-    tv_sections = []
+    movie_sections: list[tuple[int, str]] = []
+    tv_sections: list[tuple[int, str]] = []
 
-    logger.info(
+    logger.debug(
         "Checking if %s is in Movies: %s or TV: %s categories.",
         nzb_cat,
         sorted(movie_cats_split),
@@ -358,34 +454,49 @@ def refresh_auto(session: requests.Session, movie_cats: str, tv_cats: str, nzb_c
         elif type_ == "movie":
             movie_sections.append((key, title))
 
+    all_refreshed = True
     if nzb_cat in tv_cats_split:
+        logger.debug(
+            'AUTO-DETECTED "%s" CATEGORY. REFRESHING ALL %d "SHOW" LIBRARIES ON YOUR SERVER', nzb_cat, len(tv_sections)
+        )
         for key, title in tv_sections:
-            refresh_section(session, nzb_cat, "show", key, title)
+            all_refreshed = refresh_section(session, key, title) and all_refreshed
 
     if nzb_cat in movie_cats_split:
+        logger.debug(
+            'AUTO-DETECTED "%s" CATEGORY. REFRESHING ALL %d "MOVIE" LIBRARIES ON YOUR SERVER',
+            nzb_cat,
+            len(movie_sections),
+        )
         for key, title in movie_sections:
-            refresh_section(session, nzb_cat, "movie", key, title)
+            all_refreshed = refresh_section(session, key, title) and all_refreshed
+
+    if not all_refreshed:
+        sys.exit(POSTPROCESS_ERROR)
+
+    logger.info("TARGETED PLEX UPDATE FOR SECTION %s: %s COMPLETE", key, title)
 
 
 def refresh_custom_sections(session: requests.Session, raw_plex_sections: str) -> None:
-    plex_sections = raw_plex_sections.replace(" ", "")
-    plex_sections_split = plex_sections.split(",")
+    plex_sections = {int(m) for m in NUMBER_RE.findall(raw_plex_sections)}
 
-    for plex_section in plex_sections_split:
-        refresh_url = f"{get_http_scheme(plex_secure)}://{plex_ip}/library/sections/{plex_section}/refresh"
-        try:
-            r = session.get(refresh_url, timeout=10)
-            r.raise_for_status()
-        except (requests.exceptions.RequestException, OSError):
-            if silent_mode:
-                logger.warning("ERROR UPDATING SECTION %s. SILENT FAILURE MODE ACTIVATED", plex_section)
-                sys.exit(POSTPROCESS_SUCCESS)
-            else:
-                logger.exception(
-                    "ERROR OPENING URL. CHECK NETWORK CONNECTION, PLEX SERVER IP:PORT, AND SECTION NUMBERS"
-                )
-                sys.exit(POSTPROCESS_ERROR)
-        logger.info("TARGETED PLEX UPDATE FOR SECTION %s COMPLETE", plex_section)
+    sections = get_plex_sections(session)
+    all_refreshed = True
+    for key, _type, title in sections:
+        if key not in plex_sections:
+            continue
+        all_refreshed = refresh_section(session, key, title) and all_refreshed
+        plex_sections.remove(key)
+
+    if plex_sections:
+        logger.warning(
+            "THE FOLLOWING SECTIONS ARE NOT FOUND ON YOUR SERVER: %s",
+            sorted(plex_sections),
+        )
+        sys.exit(POSTPROCESS_ERROR)
+
+    if not all_refreshed:
+        sys.exit(POSTPROCESS_ERROR)
 
 
 def get_http_scheme(secure: bool) -> str:
@@ -399,7 +510,6 @@ def show_gui_notification(raw_pht_ips: str) -> None:
     pht_url_split = pht_url.split(",")
     with requests.Session() as session:
         session.headers = {"content-type": "application/json"}
-        session.verify = False
         for pht_url in pht_url_split:
             if d_headers:
                 if proper_name and proper_ep:
@@ -421,8 +531,11 @@ def show_gui_notification(raw_pht_ips: str) -> None:
                 "params": {"title": "Downloaded", "message": gui_text},
             }
             try:
-                session.post(pht_rpc_url, json=payload, timeout=10)
-                logger.info("PHT GUI NOTIFICATION TO %s SUCCESSFUL", pht_url)
+                response = session.post(pht_rpc_url, json=payload, timeout=DEFAULT_PLEX_TIMEOUT)
+                if response.ok:
+                    logger.info("PHT GUI NOTIFICATION TO %s SUCCESSFUL", pht_url)
+                else:
+                    logger.warning("PHT GUI NOTIFICATION TO %s FAILED WITH ERROR %d", pht_url, response.status_code)
             except (requests.exceptions.RequestException, OSError):
                 logger.warning("PHT GUI NOTIFICATION TO %s FAILED", pht_url, exc_info=True)
 
@@ -432,11 +545,22 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
     test_mode = command == "ConnectionTest"
     refresh_mode_test = command in ("RefreshModeTestTV", "RefreshModeTestMovies")
     list_sections_mode = command == "SectionList"
+    delete_cache_file = command == "DeleteCacheFile"
     session: requests.Session
 
-    if (command is not None) and (not test_mode) and (not list_sections_mode) and (not refresh_mode_test):
+    if (
+        (command is not None)
+        and (not test_mode)
+        and (not list_sections_mode)
+        and (not refresh_mode_test)
+        and (not delete_cache_file)
+    ):
         logger.error("INVALID COMMAND %s", command)
         sys.exit(POSTPROCESS_ERROR)
+
+    if delete_cache_file:
+        _delete_cache_file()
+        sys.exit(POSTPROCESS_SUCCESS)
 
     if list_sections_mode:
         required_test_option = "NZBPO_PLEXIP"
@@ -463,13 +587,12 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             if optname not in os.environ:
                 logger.error("OPTION %s IS MISSING IN CONFIGURATION FILE. PLEASE CHECK SCRIPT SETTINGS", optname[6:])
                 sys.exit(POSTPROCESS_ERROR)
-        plex_test_ip = os.getenv("NZBPO_PLEXIP", "")
 
         logger.info("TESTING PMS CONNECTION AND AUTHORIZATION")
-        test_url = f"{get_http_scheme(plex_secure)}://{plex_test_ip}/library/sections"
         try:
             with create_plex_session(test_mode) as session:
-                session.get(test_url, timeout=10)
+                response = session.get("/library/sections", timeout=DEFAULT_PLEX_TIMEOUT)
+                response.raise_for_status()
         except requests.HTTPError as e:
             if e.response.status_code == http.HTTPStatus.UNAUTHORIZED:
                 logger.exception("AUTHORIZATION ERROR. CHECK CONNECTION DETAILS AND RETRY TEST")
@@ -538,10 +661,6 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
 
 
 if __name__ == "__main__":
-    import urllib3
-
-    urllib3.disable_warnings(category=urllib3.exceptions.InsecureRequestWarning)
-
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(asctime)s\t%(message)s")
 
     main()
