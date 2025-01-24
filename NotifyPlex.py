@@ -414,7 +414,7 @@ def refresh_advanced(session: requests.Session, mapping: str, nzb_cat: str) -> N
             section_keys.append((key, title))
             plex_section_titles.pop(title_key)
 
-    logger.debug("REFRESHING SECTIONS: %s LIBRARIES ON YOUR SERVER", sorted([key for key, title in section_keys]))
+    logger.debug("REFRESHING SECTIONS: %s LIBRARIES ON YOUR SERVER", sorted([key for key, _title in section_keys]))
 
     all_refreshed = True
     for key, title in section_keys:
@@ -473,8 +473,6 @@ def refresh_auto(session: requests.Session, movie_cats: str, tv_cats: str, nzb_c
 
     if not all_refreshed:
         sys.exit(POSTPROCESS_ERROR)
-
-    logger.info("TARGETED PLEX UPDATE FOR SECTION %s: %s COMPLETE", key, title)
 
 
 def refresh_custom_sections(session: requests.Session, raw_plex_sections: str) -> None:
